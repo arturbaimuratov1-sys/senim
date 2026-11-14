@@ -48,7 +48,7 @@ English text ──► NLLB-200 ──► Kazakh text ──► NLLB-200 ──�
 
 - **chrF** compares character n-grams between a translation and a reference, on a 0–100 scale. We use sacreBLEU's implementation.
 - **The threshold** (55.9) was chosen on the *calibration* half of the rated translations only, to maximise F1 for catching bad translations. The *test* half was never used to choose anything.
-- **The hard-check rules** were revised once before any ratings existed, after reading translations of FLORES sentences that are *not* in the rated set. For example, the first version wrongly treated "first aid" as the number 1 and missed that Kazakh "қыркүйек" (September) becomes "қыркүйегінде". The rules were frozen before rating.
+- **The hard-check rules** were revised once, after the first Colab run and before any rating existed. The fixes came from looking at flagged *translations* (not ratings), including some sentences that later ended up in the rated set (for example "6:00 PM" → "18:00" and the colloquial weekday "шейшембі"). So the hard-check results on those sentences are slightly optimistic. Other fixes: the first version wrongly treated "first aid" as the number 1 and missed that Kazakh "қыркүйек" (September) becomes "қыркүйегінде". The rules were frozen before rating.
 
 ## Results
 
