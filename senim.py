@@ -55,8 +55,10 @@ def translate(texts, src_lang: str, tgt_lang: str, batch_size: int = 16,
         batch = [texts[i] for i in idx]
         enc = tok(batch, return_tensors="pt", padding=True, truncation=True, max_length=256).to(device)
         with torch.no_grad():
+            # max_length (not max_new_tokens) overrides the model's generation_config without a warning;
+            # for an encoder-decoder it limits only the generated output.
             gen = model.generate(**enc, forced_bos_token_id=bos, num_beams=num_beams,
-                                 max_new_tokens=max_new_tokens)
+                                 max_length=max_new_tokens)
         dec = tok.batch_decode(gen, skip_special_tokens=True)
         for i, d in zip(idx, dec):
             out[i] = d
