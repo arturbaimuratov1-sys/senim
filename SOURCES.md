@@ -9,7 +9,7 @@ Everything this project uses, with links. Licences are those stated by each sour
 | FLORES+ (devtest split; `eng_Latn`, `kaz_Cyrl`, `rus_Cyrl`, `fra_Latn`) | https://huggingface.co/datasets/openlanguagedata/flores_plus | CC BY-SA 4.0, gated (terms accepted on Hugging Face). Maintained by the Open Language Data Initiative, https://oldi.org |
 | Original FLORES-200 benchmark | NLLB Team et al. (2022), *No Language Left Behind: Scaling Human-Centered Machine Translation*, https://arxiv.org/abs/2207.04672 | — |
 | `data/own_set.csv`: 50 English sentences (25 medicine, 25 school) | Written by the project author. Claude Code suggested a list of topics; the sentences themselves are the author's. | — |
-| `data/ratings.csv`: 1–5 quality ratings of 90 Kazakh translations | Given by **Claude Opus 5.5 acting as an LLM judge** (column `rater`), not by a human rater. Script: `tools/fill_llm_ratings.py`. | See README, "Limitations" |
+| `data/ratings.csv`: 1–5 quality ratings of 90 Kazakh translations | Written down by **Claude Opus 5.5 acting as an LLM judge** (column `rater`). The author checked all 90 aloud and reports agreeing; that check was not recorded. Script: `tools/fill_llm_ratings.py`. | See README, section 2 and "Weak spots" |
 
 ## Model
 

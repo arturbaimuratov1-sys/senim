@@ -76,7 +76,7 @@ We rated 90 Kazakh translations (all 50 of ours and 40 random FLORES ones) on a 
 - 3 = meaning partly wrong or something missing;
 - 1 = useless or dangerous.
 
-**The ratings were given by Claude Opus 5.5 acting as an LLM judge, not by a fluent human rater**, because we could not get human ratings in time. The project author read the translations and summed them up as "the meaning mostly comes through, but not exactly, and some Russian words appear", but did not rate them one by one. So read every number below as *agreement with an LLM judge*.
+**The ratings were written down by Claude Opus 5.5 acting as an LLM judge** (column `rater` in `data/ratings.csv`). The project author then went through all 90 translations aloud, judged them independently without looking at the LLM's numbers, and reports that their judgement agreed with the LLM's ratings and error types. The author's check was not written down, so there is no file with separate human scores and we cannot report an agreement statistic. Read every number below as *agreement with an LLM judge that the author found consistent with their own reading*, not as an independent human rating. The author's overall impression of the translations: "the meaning mostly comes through, but not exactly, and some Russian words appear".
 
 | | n | mean rating | bad (≤ 3) | serious (≤ 2) |
 |---|---|---|---|---|
@@ -122,12 +122,12 @@ Senim caught 12 of the 16 bad translations that "always trust" would have shown 
 **Weak spots, shown as they are:**
 - **Hard checks catch little.** On our sentences the model kept numbers, times and dates right almost every time: hard checks flagged 1 of 50, the Friday → Sunday error. The real damage was wrong words and flipped negation, which only back-translation sometimes notices.
 - **Serious errors only (rating ≤ 2) are poorly caught.** With a separate threshold tuned for this stricter definition (31.4), Senim caught 1 of 7 on the test half. Back-translation hides some errors: when NLLB makes a mistake, translating back often "repairs" it.
-- **The labels come from an LLM, not people.** An LLM judge reading Kazakh can be wrong, and the same AI also helped design the check, which can bias the evaluation.
+- **The labels were written by an LLM; the human check is informal.** The author says they checked all 90 aloud and agreed, but nothing was recorded, so this is not a measured human rating. The author is also not necessarily a fluent Kazakh rater, and the same AI that wrote the labels helped design the check, which can bias the evaluation.
 - **Small data.** 90 rated sentences, 45 in the test half.
 
 ## What we'd do next
 
-1. **Real human ratings**: 2–3 fluent Kazakh speakers rate the same 90 translations, and we report how often they agree with each other and with the LLM judge.
+1. **Recorded human ratings**: 2–3 fluent Kazakh speakers write down their own 1–5 scores for the same 90 translations (a blank sheet is ready: `data/ratings_human.xlsx`), and we report how often they agree with each other and with the LLM judge.
 2. **A negation check**: compare "not / do not / never" in the source with Kazakh negative forms (-ма/-ме, емес, жоқ). This was the most dangerous error and our checks missed it.
 3. **A bigger model** (NLLB-200 1.3B/3.3B) or several translators voting: if two systems disagree, warn.
 4. **A "Russian loanword" detector**, since the author noticed Russian words in the output.
