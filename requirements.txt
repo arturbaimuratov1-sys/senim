@@ -4,3 +4,5 @@ sentencepiece
 sacrebleu>=2.4
 gradio>=4.0
 pandas
+sentence-transformers
+scikit-learn

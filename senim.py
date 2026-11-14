@@ -333,9 +333,10 @@ def sentence_chrf(hyp: str, ref: str) -> float:
     return sacrebleu.sentence_chrf(hyp, [ref]).score
 
 
-def verdict(src: str, tgt: str, back: str, threshold: float = DEFAULT_BT_THRESHOLD):
-    """Return a dict with the trust label and the reasons behind it."""
-    reasons = hard_checks(src, tgt)
+def verdict(src: str, tgt: str, back: str, threshold: float = DEFAULT_BT_THRESHOLD, negation: bool = True):
+    """Return a dict with the trust label and the reasons behind it.
+    negation=True adds the v2 negation check (used by the app; see README, section 6)."""
+    reasons = hard_checks(src, tgt) + (check_negation(src, tgt) if negation else [])
     bt = sentence_chrf(back, src)
     if bt < threshold:
         reasons.append(f"back-translation differs from the original (chrF {bt:.0f} < {threshold:.0f})")

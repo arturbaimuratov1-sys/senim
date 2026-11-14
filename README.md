@@ -25,12 +25,14 @@ Translators always give an answer and never say "I'm not sure". For Kazakh, a lo
 1. **A translation quality test** (the brief): 150 sentences from the FLORES+ benchmark, translated by Meta's open NLLB-200 (600M) model into Kazakh, Russian and French, scored with chrF against professional human translations, and compared with a "do nothing" baseline (just show the English).
 2. **Our own test set**: 50 English sentences of the kind our users actually meet: 25 from medicine leaflets, 25 from school letters, many with doses, times and dates.
 3. **Senim's trust check**: for each translation, a label **"likely OK"** or **"do not rely on this"**, with the reasons in Kazakh and English.
-4. **A demo app** where you paste English text and get the Kazakh translation, the trust label, and a back-translation to check against.
+4. **A demo app** where you paste English text and get the Kazakh translation, the trust label (with reasons in Kazakh), a back-translation to check against, and, when there is a warning, a second translation from a bigger model.
 
 ## What we added (beyond the brief)
 
 - **A safety check for the things that hurt most**: numbers, dosage units (mg, ml, °C…), clock times, months and weekdays must survive translation. Number words count too ("two" = "екі" = 2), and "6:00 PM" is allowed to become "18:00".
 - **A no-reference quality signal**: translate the Kazakh back into English and compare it with the original (back-translation chrF). This works on any new text, where no human reference exists.
+- **A negation check** (v2): the number of negations ("not", "never", "without"… vs Kazakh "емес", "жоқ", the verb suffix -ма/-ме) must match. It targets the most dangerous error we found: "if you notice bleeding" → "if you do **not** have bleeding".
+- **A second opinion from a bigger model** (v2): when Senim warns, the app also shows the translation of NLLB-200 1.3B, which scores higher on FLORES+.
 - **An honest evaluation of the trust check**: the warning threshold is tuned on one half of the rated translations and tested on the other half, against the baseline "always trust".
 
 ## How it works
@@ -40,10 +42,11 @@ English text ──► NLLB-200 ──► Kazakh text ──► NLLB-200 ──�
                                    │                              │
                                    ▼                              ▼
                       hard checks vs. original          chrF(back-translation, original)
-             (numbers, units, times, dates)               below threshold 63.0?
+       (numbers, units, times, dates, negations)          below threshold 63.0?
                                    └────────────┬─────────────────┘
                                                 ▼
                        any problem → ⚠️ "Do not rely on this translation" + reasons
+                                       + a second translation from a bigger model (NLLB 1.3B)
                        none        → ✅ "Likely OK"
 ```
 
@@ -167,14 +170,63 @@ The threshold was chosen on the other 45 sentences.
 - **One human rater** who is the project author, not an independent professional, and who saw the translations while building the project. The procedure was first run with the LLM labels and then repeated unchanged with the human labels.
 - **Small data.** 90 rated sentences, 45 in the test half.
 
+### 6. Senim v2: trying to make it smarter
+
+We tried four new signals, aimed at what v1 missed:
+
+| Signal | Idea |
+|---|---|
+| negation check | the number of negations must match |
+| back-translation by NLLB 1.3B | a *different*, bigger model translates back, so it is less likely to "repair" the error |
+| agreement with NLLB 1.3B | if two models translate differently, be careful |
+| LaBSE similarity | a multilingual sentence-embedding model compares the meaning of the English and the Kazakh directly |
+
+We also combined all six signals in a logistic regression. The procedure was fixed in advance: same split, fit and threshold on the calibration half, and cross-validation over all 90 (5 folds × 20 repeats), so that the result does not depend on one lucky split.
+
+**A bigger model translates better** (FLORES+, n = 150, corpus chrF; [`results/v2_chrf_600m_vs_1p3b.csv`](results/v2_chrf_600m_vs_1p3b.csv)):
+
+| Language | NLLB 600M | NLLB 1.3B |
+|---|---|---|
+| Kazakh | 52.1 | **53.9** |
+| Russian | 56.0 | **58.9** |
+| French | 69.2 | **72.7** |
+
+**How well each signal ranks bad translations above good ones** (ROC AUC on all 90 human-rated translations; 0.5 = coin flip, 1.0 = perfect):
+
+| Signal | AUC, bad = ≤ 3 | AUC, serious = ≤ 2 |
+|---|---|---|
+| **v1 (hard checks + back-translation)** | **0.72** | **0.80** |
+| back-translation chrF (600M) | 0.71 | 0.78 |
+| back-translation chrF (1.3B) | 0.68 | 0.78 |
+| agreement with 1.3B | 0.68 | 0.65 |
+| LaBSE similarity | 0.67 | 0.67 |
+| negation check | 0.55 | 0.55 |
+| hard checks | 0.51 | 0.53 |
+| **v2 combined model** (cross-validated) | 0.68 ± 0.11 | 0.73 ± 0.14 |
+
+![AUC per signal](results/v2_signal_auc.png)
+
+**The honest result: the "smarter" combined model is *not* better than the simple v1.** In cross-validation it beat v1 in only 41% of folds for "bad" and 19% for "serious". Each new signal on its own ranks translations worse than the plain back-translation score, and with only 90 rated sentences, six signals are too many to learn reliably. So the app does **not** use the combined model ([`results/v2_cv_auc.csv`](results/v2_cv_auc.csv), [`results/v2_trust_check_eval.csv`](results/v2_trust_check_eval.csv)).
+
+**What we kept:**
+
+1. **The negation check, as a separate warning.** It is noisy:
+   - it fires on 19 of 150 *professional* FLORES translations, because Kazakh often says "could not finish" where English says "failed";
+   - on the rated set it fired 16 times, and 10 of those were bad by the human's rating (5 serious).
+
+   But it targets the error type that hurts most, and it tells the reader *what* is wrong, which a low back-translation score cannot. In `own_22` (bleeding), back-translation already looked bad ("If you do not bleed normally", chrF 40.9), but the warning now says why: a negation appeared that is not in the original. On the test half, adding it to v1 caught **7 of 8 serious errors instead of 6**, at the cost of more false alarms (38% instead of 24% of acceptable translations). For a medicine leaflet we prefer one more catch, so the app uses v1 + negation. This choice was made after seeing the test-half numbers, so treat the "7 of 8" as optimistic.
+
+2. **The bigger model as a second opinion.** When Senim warns, the app also shows the NLLB 1.3B translation. That translation is not checked, because the human ratings are of the 600M output.
+
 ## What we'd do next
 
 1. **More human raters**: 2–3 more fluent Kazakh speakers rate the same 90 translations (blank sheet: `data/ratings_human.xlsx`), so we can measure agreement between people, not just between one person and an LLM.
-2. **A negation check**: compare "not / do not / never" in the source with Kazakh negative forms (-ма/-ме, емес, жоқ). This was the most dangerous error and our checks missed it.
-3. **A bigger model** (NLLB-200 1.3B/3.3B) or several translators voting: if two systems disagree, warn.
-4. **A "Russian loanword" detector**, since the author noticed Russian words in the output.
-5. **Test with real users**: is a warning useful, or does a high false-alarm rate teach people to ignore it?
-6. **Use the author's corrections**: every bad translation now has a human-written correct version (`human_correction`), which can serve as a small Kazakh reference set for medicine and school texts.
+2. **A better negation check**: our regex version fires on 13% of professional translations. A Kazakh morphological analyser (for example Apertium-kaz) could tell real negation from words like "алмады" ("could not").
+3. **More labelled data before adding signals**: v2 showed that with 90 ratings, extra signals mostly add noise. Around 300–500 rated sentences would let a combined model, or a learned quality-estimation model such as COMET-Kiwi, pay off.
+4. **Switch the main translator to NLLB 1.3B or 3.3B** (+1.8 chrF on Kazakh) and re-rate its output, so that the trust check is calibrated for the better model.
+5. **A "Russian loanword" detector**, since the author noticed Russian words in the output.
+6. **Test with real users**: is a warning useful, or does a high false-alarm rate teach people to ignore it?
+7. **Use the author's corrections**: every bad translation now has a human-written correct version (`human_correction`), which can serve as a small Kazakh reference set for medicine and school texts.
 
 ## Run it yourself
 
@@ -187,9 +239,9 @@ The threshold was chosen on the other 45 sentences.
 Full list with links and licences: [SOURCES.md](SOURCES.md).
 
 - **Data:** FLORES+ (Open Language Data Initiative, CC BY-SA 4.0); own test set written by the author.
-- **Model:** NLLB-200 distilled 600M (Meta, CC BY-NC 4.0).
+- **Models:** NLLB-200 distilled 600M and 1.3B (Meta, CC BY-NC 4.0); LaBSE (Google, Apache 2.0) via sentence-transformers.
 - **Metric:** chrF (Popović 2015) via sacreBLEU.
-- **Libraries:** PyTorch, Transformers, Datasets, Gradio, pandas, SciPy, Matplotlib. Platform: Google Colab.
+- **Libraries:** PyTorch, Transformers, Datasets, sentence-transformers, scikit-learn, Gradio, pandas, SciPy, Matplotlib. Platform: Google Colab.
 - **Ratings:** the author (human, primary); Claude Opus 5.5 as an LLM judge (secondary, for comparison).
 - **AI tools:** Claude Code (Claude Opus 5.5) wrote most of the code, ran the notebook in Colab, gave the LLM-judge ratings, and drafted this write-up.
 

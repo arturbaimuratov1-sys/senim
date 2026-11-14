@@ -15,7 +15,9 @@ Everything this project uses, with links. Licences are those stated by each sour
 
 | What | Where | Licence / note |
 |---|---|---|
-| NLLB-200 distilled, 600M parameters | https://huggingface.co/facebook/nllb-200-distilled-600M | CC BY-NC 4.0 (non-commercial) |
+| NLLB-200 distilled, 600M parameters (main translator) | https://huggingface.co/facebook/nllb-200-distilled-600M | CC BY-NC 4.0 (non-commercial) |
+| NLLB-200 distilled, 1.3B parameters (v2: second opinion and back-translation) | https://huggingface.co/facebook/nllb-200-distilled-1.3B | CC BY-NC 4.0 (non-commercial) |
+| LaBSE (v2: cross-lingual sentence similarity) | https://huggingface.co/sentence-transformers/LaBSE · Feng et al. (2022), *Language-agnostic BERT Sentence Embedding*, https://arxiv.org/abs/2007.01852 | Apache 2.0 |
 
 ## Metric
 
@@ -30,6 +32,8 @@ Everything this project uses, with links. Licences are those stated by each sour
 - Hugging Face Transformers — https://github.com/huggingface/transformers
 - Hugging Face Datasets — https://github.com/huggingface/datasets
 - Gradio (demo app) — https://www.gradio.app
+- sentence-transformers — https://www.sbert.net
+- scikit-learn (logistic regression, cross-validation, AUC, Cohen's kappa) — https://scikit-learn.org
 - pandas, NumPy, SciPy, Matplotlib — https://pandas.pydata.org, https://numpy.org, https://scipy.org, https://matplotlib.org
 - Google Colab (free T4 GPU) — https://colab.research.google.com
 - GitHub and GitHub CLI — https://github.com, https://cli.github.com

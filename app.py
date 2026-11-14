@@ -22,13 +22,15 @@ if os.path.exists("results/threshold.json"):
 def run(text: str):
     text = (text or "").strip()
     if not text:
-        return "", "", ""
+        return "", "", "", ""
     kk = senim.translate([text], "eng_Latn", "kaz_Cyrl")[0]
     back = senim.translate([kk], "kaz_Cyrl", "eng_Latn")[0]
-    v = senim.verdict(text, kk, back, THRESHOLD)
+    v = senim.verdict(text, kk, back, THRESHOLD, negation=True)
+    second = ""
     if v["trust"]:
         label = ("### ✅ Аударма сенімді көрінеді\n"
-                 "Likely OK: numbers, units and dates match, and the back-translation is close to the original.\n\n"
+                 "Likely OK: numbers, units, dates and negations match, "
+                 "and the back-translation is close to the original.\n\n"
                  "Маңызды шешім алдында (дәрі, мектеп) бәрібір ағылшынша білетін адамнан сұраңыз.")
     else:
         kk_lines = "\n".join(f"- {r}" for r in senim.kk_reasons(v["reasons"]))
@@ -36,8 +38,10 @@ def run(text: str):
         label = ("### ⚠️ Бұл аудармаға сенуге болмайды\n"
                  "Do not rely on this translation. Ask a person who reads English.\n\n"
                  f"{kk_lines}\n\n**Why (details):**\n{en_lines}")
+        # Second opinion from the bigger model: more accurate on FLORES+, but not checked by Senim.
+        second = senim.translate([text], "eng_Latn", "kaz_Cyrl", model_name=senim.BIG_MODEL_NAME)[0]
     details = f"Back-translation chrF: {v['bt_chrf']:.1f} (threshold {THRESHOLD:.1f}, {THRESHOLD_NOTE})"
-    return kk, label, f"{back}\n\n{details}"
+    return kk, label, second, f"{back}\n\n{details}"
 
 
 EXAMPLES = [
@@ -45,6 +49,7 @@ EXAMPLES = [
     "Do not give this medicine to children under 12 years old.",
     "The parent-teacher meeting will be held on Thursday, March 5, at 6 pm in room 214.",
     "Please return the signed permission slip by Friday.",
+    "Stop taking the tablets and call your doctor if you notice unusual bleeding.",
 ]
 
 with gr.Blocks(title="Senim") as demo:
@@ -58,8 +63,10 @@ with gr.Blocks(title="Senim") as demo:
         with gr.Column():
             out = gr.Textbox(label="Kazakh / Қазақша", lines=6)
             trust = gr.Markdown()
+            second = gr.Textbox(label="Second translation by a bigger model (only with a warning; not checked) / "
+                                      "Екінші нұсқа (үлкен модель, тексерілмеген)", lines=4)
             back = gr.Textbox(label="Back-translation to English (for checking)", lines=4)
-    btn.click(run, inputs=src, outputs=[out, trust, back])
+    btn.click(run, inputs=src, outputs=[out, trust, second, back])
 
 if __name__ == "__main__":
     demo.launch(share=bool(os.environ.get("COLAB_RELEASE_TAG")))

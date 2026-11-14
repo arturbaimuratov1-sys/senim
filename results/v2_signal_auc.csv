@@ -1,0 +1,15 @@
+bad_definition,signal,n,bad,auc
+rating <= 3,v1 (hard checks + back-translation),90,44,0.715
+rating <= 3,back-translation chrF (600M),90,44,0.708
+rating <= 3,back-translation chrF (1.3B),90,44,0.678
+rating <= 3,agreement with 1.3B,90,44,0.676
+rating <= 3,LaBSE similarity,90,44,0.673
+rating <= 3,hard checks,90,44,0.511
+rating <= 3,negation check,90,44,0.548
+rating <= 2,v1 (hard checks + back-translation),90,19,0.803
+rating <= 2,back-translation chrF (600M),90,19,0.784
+rating <= 2,back-translation chrF (1.3B),90,19,0.778
+rating <= 2,agreement with 1.3B,90,19,0.646
+rating <= 2,LaBSE similarity,90,19,0.665
+rating <= 2,hard checks,90,19,0.526
+rating <= 2,negation check,90,19,0.554
