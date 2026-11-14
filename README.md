@@ -39,7 +39,7 @@ English text ──► NLLB-200 ──► Kazakh text ──► NLLB-200 ──�
                                    │                              │
                                    ▼                              ▼
                       hard checks vs. original          chrF(back-translation, original)
-             (numbers, units, times, dates)               below threshold 55.9?
+             (numbers, units, times, dates)               below threshold 63.0?
                                    └────────────┬─────────────────┘
                                                 ▼
                        any problem → ⚠️ "Do not rely on this translation" + reasons
@@ -47,7 +47,7 @@ English text ──► NLLB-200 ──► Kazakh text ──► NLLB-200 ──�
 ```
 
 - **chrF** compares character n-grams between a translation and a reference, on a 0–100 scale. We use sacreBLEU's implementation.
-- **The threshold** (55.9) was chosen on the *calibration* half of the rated translations only, to maximise F1 for catching bad translations. The *test* half was never used to choose anything.
+- **The threshold** (63.0) was chosen on the *calibration* half of the human-rated translations only, to maximise F1 for catching bad translations. The *test* half was never used to choose anything.
 - **The hard-check rules** were revised once, after the first Colab run and before any rating existed. The fixes came from looking at flagged *translations* (not ratings), including some sentences that later ended up in the rated set (for example "6:00 PM" → "18:00" and the colloquial weekday "шейшембі"). So the hard-check results on those sentences are slightly optimistic. Other fixes: the first version wrongly treated "first aid" as the number 1 and missed that Kazakh "қыркүйек" (September) becomes "қыркүйегінде". The rules were frozen before rating.
 
 ## Results
@@ -69,69 +69,105 @@ Kazakh scores lowest of the three: the model is clearly weaker on Kazakh than on
 - a 21–20 rugby result ending a winning streak came out as the team "won 15 games";
 - in one case the whole second sentence was dropped.
 
-### 2. Who rated the translations
+### 2. Human ratings of 90 translations
 
 We rated 90 Kazakh translations (all 50 of ours and 40 random FLORES ones) on a 1–5 scale:
 - 5 = correct;
 - 3 = meaning partly wrong or something missing;
 - 1 = useless or dangerous.
 
-**The ratings were written down by Claude Opus 5.5 acting as an LLM judge** (column `rater` in `data/ratings.csv`). The project author then went through all 90 translations aloud, judged them independently without looking at the LLM's numbers, and reports that their judgement agreed with the LLM's ratings and error types. The author's check was not written down, so there is no file with separate human scores and we cannot report an agreement statistic. Read every number below as *agreement with an LLM judge that the author found consistent with their own reading*, not as an independent human rating. The author's overall impression of the translations: "the meaning mostly comes through, but not exactly, and some Russian words appear".
+**Who rated.** The project author rated all 90 in Excel and, for every translation, wrote what is wrong and how it should read (`data/ratings_human_filled.xlsx`, also merged into `data/ratings.csv`). The author says they did this without looking at the AI's numbers. Separately and earlier, Claude Opus 5.5 rated the same 90 as an LLM judge; those scores are kept in the `llm_*` columns for comparison. There is only one human rater, so we cannot measure agreement between people.
 
-| | n | mean rating | bad (≤ 3) | serious (≤ 2) |
+| | n | mean (human) | bad (≤ 3) | serious (≤ 2) |
 |---|---|---|---|---|
-| Our medicine sentences | 25 | – | 9 | 4 |
-| Our school sentences | 25 | – | 7 | 3 |
-| Our set, total | 50 | 3.92 | 16 | 7 |
-| FLORES | 40 | 3.67 | 16 | 8 |
-| **All** | **90** | **3.81** | **32** | **15** |
+| Our medicine sentences | 25 | 3.40 | 13 | 5 |
+| Our school sentences | 25 | 3.60 | 8 | 3 |
+| FLORES | 40 | 3.15 | 23 | 11 |
+| **All** | **90** | **3.34** | **44** | **19** |
 
-Main error types among the 32 bad translations:
+**Medicine leaflets came out worse than school letters**: 13 of 25 bad, against 8 of 25. This is bad news for the people we care about most.
 
-| Error type | Count | Example |
+What went wrong in the 44 bad translations (from the author's comments):
+
+| Problem | Count | Example |
 |---|---|---|
-| wrong word | 21 | "consult a doctor" → "give advice to the doctor" |
-| dropped content | 7 | |
-| flipped negation | 2 | "if you notice unusual bleeding" → "if you do **not** have usual bleeding" |
+| meaning distorted | 19 | "consult a doctor" → "give advice to the doctor"; developed countries → "developing" |
+| wrong or unnatural word | 12 | red cabbage → "red vegetable"; exam → "class" |
+| content dropped | 8 | the translation stops halfway: "do not take with alcohol because it…" |
+| grammar or logic | 3 | "so that" → "therefore" |
 | wrong date | 1 | Friday → Sunday |
-| grammar | 1 | |
+| name or term | 1 | |
 
-These are exactly the errors a reader can't spot.
+Two of the "meaning distorted" cases are **flipped negations**, the most dangerous kind:
+- "if you notice unusual bleeding" → "if you do **not** have usual bleeding";
+- "your child may miss the trip" → "may **not** miss the trip".
 
-### 3. Does chrF agree with the ratings? (Spearman correlation)
+### 3. Human vs. LLM judge
+
+| | |
+|---|---|
+| Same score | 47 / 90 |
+| Within 1 point | 89 / 90 |
+| Spearman ρ | 0.87 |
+| Quadratic-weighted κ | 0.80 |
+| Agree on "bad (≤ 3)" | 76 / 90 (κ = 0.69) |
+| Agree on "serious (≤ 2)" | 86 / 90 (κ = 0.86) |
+| Mean score: human / LLM | 3.34 / 3.81 |
+
+The two raters order the translations very similarly, but **the human is stricter**: lower in 42 cases, higher in 1. The LLM judge called 32 translations bad, the human 44. All but one of the LLM's "bad" were also bad for the human. In short, an LLM judge is a usable first filter, but it is too lenient to replace a human. Full confusion table: [`results/human_vs_llm_confusion.csv`](results/human_vs_llm_confusion.csv).
+
+### 4. Does chrF agree with human ratings? (Spearman correlation)
 
 | Signal | Subset | n | Spearman ρ | p |
 |---|---|---|---|---|
-| chrF vs Kazakh reference | FLORES rated | 40 | 0.45 | 0.003 |
-| back-translation chrF (no reference needed) | all rated | 90 | 0.45 | < 0.001 |
-| back-translation chrF | our set | 50 | 0.42 | 0.002 |
-| back-translation chrF | FLORES rated | 40 | 0.47 | 0.002 |
+| chrF vs Kazakh reference | FLORES rated | 40 | 0.48 | 0.002 |
+| back-translation chrF (no reference needed) | all rated | 90 | 0.43 | < 0.001 |
+| back-translation chrF | our set | 50 | 0.35 | 0.012 |
+| back-translation chrF | FLORES rated | 40 | 0.51 | < 0.001 |
 
-Both are moderate signals, far from perfect. On all 150 FLORES sentences, back-translation chrF and reference chrF agree only weakly: ρ = 0.30 (p = 0.0002).
+Both are moderate signals, far from perfect, and back-translation is weakest on our own medicine and school sentences (0.35). On all 150 FLORES sentences, back-translation chrF and reference chrF agree only weakly: ρ = 0.30 (p = 0.0002).
 
-### 4. Does the trust check catch bad translations? (test half only, n = 45, 16 bad)
+### 5. Does the trust check catch bad translations? (human labels, test half only, n = 45)
 
-| System | Bad caught | Missed | False alarms (of 29 good) | Precision |
-|---|---|---|---|---|
-| Always trust (baseline) | 0 / 16 | 16 | 0 | – |
-| Hard checks only | 1 / 16 | 15 | 0 | 100% |
-| **Senim: hard checks + back-translation < 55.9** | **12 / 16 (75%)** | 4 | 11 (38%) | 52% |
+The threshold was chosen on the other 45 sentences.
 
-Senim caught 12 of the 16 bad translations that "always trust" would have shown as fine. The price is many false alarms: 11 of 29 good translations were also flagged. On a test set this small, the uncertainty is large: 95% Wilson interval 51–90% for the catch rate and 23–56% for the false-alarm rate.
+**"Bad" = rating ≤ 3** (25 of the 45 test sentences are bad):
+
+| System | Bad caught | False alarms (of 20 good) | Precision |
+|---|---|---|---|
+| Always trust (baseline) | 0 / 25 | 0 | – |
+| Always warn (for comparison) | 25 / 25 | 20 (100%) | 56% |
+| Hard checks only | 1 / 25 | 0 | 100% |
+| **Senim (threshold 63.0)** | **19 / 25 (76%)** | 13 (65%) | 59% |
+
+**"Bad" = rating ≤ 2, serious errors only** (8 of 45):
+
+| System | Bad caught | False alarms (of 37 good) | Precision |
+|---|---|---|---|
+| Always trust (baseline) | 0 / 8 | 0 | – |
+| Hard checks only | 1 / 8 | 0 | 100% |
+| **Senim (threshold 47.0)** | **6 / 8 (75%)** | 9 (24%) | 40% |
+
+**How to read this honestly:**
+- **Serious errors: the check helps.** It catches 6 of 8 while warning on only 24% of acceptable translations. When it warns, the translation is seriously wrong 40% of the time, against 18% (8 of 45) if you picked at random.
+- **The broad "≤ 3" definition: the check barely beats warning on everything.** By the human's strict standard more than half of the translations are bad, so a warning is right only 59% of the time, against 56% for "always warn". It catches 76%, but also flags 65% of good translations.
+- **The numbers are uncertain.** With 45 test sentences, the 95% Wilson interval for "6 of 8 caught" is 41–93%.
+- **Compared with the LLM labels:** with the LLM judge's ratings, the same procedure caught 12 / 16 bad (≤ 3) with 38% false alarms, but only 1 / 7 serious ones ([`results/trust_check_eval_llm.csv`](results/trust_check_eval_llm.csv)). Who rates changes the conclusion, which is one more reason human labels matter.
 
 **Weak spots, shown as they are:**
-- **Hard checks catch little.** On our sentences the model kept numbers, times and dates right almost every time: hard checks flagged 1 of 50, the Friday → Sunday error. The real damage was wrong words and flipped negation, which only back-translation sometimes notices.
-- **Serious errors only (rating ≤ 2) are poorly caught.** With a separate threshold tuned for this stricter definition (31.4), Senim caught 1 of 7 on the test half. Back-translation hides some errors: when NLLB makes a mistake, translating back often "repairs" it.
-- **The labels were written by an LLM; the human check is informal.** The author says they checked all 90 aloud and agreed, but nothing was recorded, so this is not a measured human rating. The author is also not necessarily a fluent Kazakh rater, and the same AI that wrote the labels helped design the check, which can bias the evaluation.
+- **Hard checks catch little.** NLLB kept numbers, times and dates right almost every time: hard checks flagged 1 of our 50 sentences, the Friday → Sunday error. The real damage was distorted meaning and wrong words, which only back-translation sometimes notices.
+- **Back-translation can hide errors.** When NLLB makes a mistake, translating back with the same model often "repairs" it.
+- **One human rater** who is the project author, not an independent professional, and who saw the translations while building the project. The procedure was first run with the LLM labels and then repeated unchanged with the human labels.
 - **Small data.** 90 rated sentences, 45 in the test half.
 
 ## What we'd do next
 
-1. **Recorded human ratings**: 2–3 fluent Kazakh speakers write down their own 1–5 scores for the same 90 translations (a blank sheet is ready: `data/ratings_human.xlsx`), and we report how often they agree with each other and with the LLM judge.
+1. **More human raters**: 2–3 more fluent Kazakh speakers rate the same 90 translations (blank sheet: `data/ratings_human.xlsx`), so we can measure agreement between people, not just between one person and an LLM.
 2. **A negation check**: compare "not / do not / never" in the source with Kazakh negative forms (-ма/-ме, емес, жоқ). This was the most dangerous error and our checks missed it.
 3. **A bigger model** (NLLB-200 1.3B/3.3B) or several translators voting: if two systems disagree, warn.
 4. **A "Russian loanword" detector**, since the author noticed Russian words in the output.
-5. **Test with real users**: is a warning useful, or does a 38% false-alarm rate teach people to ignore it?
+5. **Test with real users**: is a warning useful, or does a high false-alarm rate teach people to ignore it?
+6. **Use the author's corrections**: every bad translation now has a human-written correct version (`human_correction`), which can serve as a small Kazakh reference set for medicine and school texts.
 
 ## Run it yourself
 
@@ -147,6 +183,7 @@ Full list with links and licences: [SOURCES.md](SOURCES.md).
 - **Model:** NLLB-200 distilled 600M (Meta, CC BY-NC 4.0).
 - **Metric:** chrF (Popović 2015) via sacreBLEU.
 - **Libraries:** PyTorch, Transformers, Datasets, Gradio, pandas, SciPy, Matplotlib. Platform: Google Colab.
+- **Ratings:** the author (human, primary); Claude Opus 5.5 as an LLM judge (secondary, for comparison).
 - **AI tools:** Claude Code (Claude Opus 5.5) wrote most of the code, ran the notebook in Colab, gave the LLM-judge ratings, and drafted this write-up.
 
 *This project is a prototype and is not medical advice.*

@@ -1,0 +1,5 @@
+metric,subset,n,spearman,spearman_p,pearson
+chrF vs Kazakh reference,FLORES rated,40,0.451,0.003468470459378354,0.446
+back-translation chrF (no reference),all rated,90,0.452,7.6084890024528516e-06,0.424
+back-translation chrF (no reference),own set,50,0.423,0.002232635131787391,0.342
+back-translation chrF (no reference),FLORES rated,40,0.466,0.0024594902944162014,0.505

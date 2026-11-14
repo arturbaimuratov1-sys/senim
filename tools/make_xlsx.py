@@ -1,7 +1,7 @@
 """Builds readable Excel files from data/ratings.csv (one sentence per cell, wrapped text).
 
   data/ratings_human.xlsx          - blank sheet for the author's own ratings (no AI ratings inside)
-  results/ratings_claude_view.xlsx - the LLM-judge ratings, for reading
+  results/ratings_view.xlsx        - human and LLM-judge ratings side by side, for reading
 """
 import csv
 from pathlib import Path
@@ -39,12 +39,15 @@ def build(path, headers, widths, getter, human=False):
     wb.save(path)
 
 
-build(root / "data" / "ratings_human.xlsx",
+if not (root / "data" / "ratings_human.xlsx").exists():
+  build(root / "data" / "ratings_human.xlsx",
       ["id", "English original", "Kazakh translation", "rating 1-5", "error type"],
       [12, 55, 55, 11, 16],
       lambda r: [r["id"], r["source"], r["translation"], None, None], human=True)
-build(root / "results" / "ratings_claude_view.xlsx",
-      ["id", "English original", "Kazakh translation", "rating 1-5", "error type", "rater", "note"],
-      [12, 50, 50, 11, 14, 22, 45],
-      lambda r: [r["id"], r["source"], r["translation"], int(r["rating_1_5"]), r["error_type"], r["rater"], r["note"]])
+build(root / "results" / "ratings_view.xlsx",
+      ["id", "English original", "Kazakh translation", "human rating", "human comment", "human correction",
+       "LLM rating", "LLM error type", "LLM note"],
+      [12, 45, 45, 9, 45, 45, 9, 14, 40],
+      lambda r: [r["id"], r["source"], r["translation"], int(r["rating_1_5"]), r["human_comment"], r["human_correction"],
+                 int(r["llm_rating"]), r["llm_error_type"], r["llm_note"]])
 print("ok", len(rows))
