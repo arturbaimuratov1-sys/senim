@@ -1,0 +1,7 @@
+bad_definition,split,system,n,bad,caught_bad,missed_bad,false_alarms,good_not_flagged,recall_bad,false_alarm_rate,precision
+rating <= 3,test,always trust (baseline),45,16,0,16,0,29,0.0,0.0,
+rating <= 3,test,hard checks only,45,16,1,15,0,29,0.062,0.0,1.0
+rating <= 3,test,Senim: hard checks + back-translation < 55.9,45,16,12,4,11,18,0.75,0.379,0.522
+rating <= 2,test,always trust (baseline),45,7,0,7,0,38,0.0,0.0,
+rating <= 2,test,hard checks only,45,7,1,6,0,38,0.143,0.0,1.0
+rating <= 2,test,Senim: hard checks + back-translation < 31.4,45,7,1,6,1,37,0.143,0.026,0.5

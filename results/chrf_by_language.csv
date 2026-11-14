@@ -1,0 +1,4 @@
+language,code,n,chrF_NLLB,chrF_baseline_english
+Kazakh,kaz_Cyrl,150,52.1,1.4
+Russian,rus_Cyrl,150,56.0,1.0
+French,fra_Latn,150,69.2,25.5

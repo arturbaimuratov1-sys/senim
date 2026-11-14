@@ -1,0 +1,11 @@
+{
+  "bt_chrf_threshold": 55.9,
+  "chosen_on": "calibration half of data/ratings.csv",
+  "bad_definition": "rating_1_5 <= 3",
+  "all": {
+    "bad_if_rating_le_3": 55.9,
+    "bad_if_rating_le_2": 31.4
+  },
+  "n_calibration": 45,
+  "n_test": 45
+}
