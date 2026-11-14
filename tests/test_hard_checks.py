@@ -40,6 +40,23 @@ def test_hard_checks(src, tgt, should_flag):
     assert bool(senim.hard_checks(src, tgt)) == should_flag, senim.hard_checks(src, tgt)
 
 
+NEG_CASES = [
+    ("Stop the tablets if you notice unusual bleeding.",
+     "Егер сізде әдеттегідей қан кетпесе, таблеткаларды тоқтатыңыз.", True),   # negation added
+    ("If you have not paid the fee by Monday your child may miss the trip.",
+     "Егер сіз дүйсенбіге дейін ақыны төлемесеңіз, балаңыз сапарды жіберіп алмауы мүмкін.", True),
+    ("Do not give this medicine to children under 2 years.",
+     "Бұл препаратты 2 жасқа дейінгі балаларға бермеңіз.", False),
+    ("Take the medicine after meals.", "Дәріні тамақтан кейін қабылдаңыз.", False),
+    ("Keep the bottle in a cool place.", "Флаконды салқын жерде сақтаңыз.", False),
+]
+
+
+@pytest.mark.parametrize("src,tgt,should_flag", NEG_CASES)
+def test_negation(src, tgt, should_flag):
+    assert bool(senim.check_negation(src, tgt)) == should_flag, senim.negation_counts(src, tgt)
+
+
 def test_kazakh_reasons():
     out = senim.kk_reasons(["time missing or changed: 6:00", "number not in the original: 5"])
     assert len(out) == 2

@@ -7,6 +7,9 @@ The trust check has two parts:
   2. Back-translation: the Kazakh text is translated back to English and
      compared with the source using sentence-level chrF. A low score means
      the meaning probably drifted.
+v2 adds: a negation check, a second opinion from a bigger model (NLLB 1.3B),
+back-translation by that bigger model, LaBSE meaning similarity, and a small
+logistic model that combines all signals (trained in notebook.ipynb).
 """
 from __future__ import annotations
 
@@ -19,30 +22,31 @@ DEFAULT_BT_THRESHOLD = 50.0  # used only until a calibrated value exists in resu
 # Translation
 # ---------------------------------------------------------------------------
 
-_model = None
-_tokenizer = None
-_device = None
+BIG_MODEL_NAME = "facebook/nllb-200-distilled-1.3B"
+LABSE_NAME = "sentence-transformers/LaBSE"
+
+_models = {}  # name -> (model, tokenizer, device)
 
 
 def load_model(name: str = MODEL_NAME):
-    global _model, _tokenizer, _device
-    if _model is None:
+    if name not in _models:
         import torch
         from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
-        _device = "cuda" if torch.cuda.is_available() else "cpu"
-        _tokenizer = AutoTokenizer.from_pretrained(name)
-        dtype = torch.float16 if _device == "cuda" else torch.float32
-        _model = AutoModelForSeq2SeqLM.from_pretrained(name, torch_dtype=dtype).to(_device).eval()
-    return _model, _tokenizer, _device
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        tok = AutoTokenizer.from_pretrained(name)
+        dtype = torch.float16 if device == "cuda" else torch.float32
+        model = AutoModelForSeq2SeqLM.from_pretrained(name, torch_dtype=dtype).to(device).eval()
+        _models[name] = (model, tok, device)
+    return _models[name]
 
 
 def translate(texts, src_lang: str, tgt_lang: str, batch_size: int = 16,
-              num_beams: int = 4, max_new_tokens: int = 256):
+              num_beams: int = 4, max_new_tokens: int = 256, model_name: str = MODEL_NAME):
     """Translate a list of strings with NLLB. Language codes are FLORES-200 codes, e.g. eng_Latn."""
     import torch
 
-    model, tok, device = load_model()
+    model, tok, device = load_model(model_name)
     if isinstance(texts, str):
         texts = [texts]
     texts = [str(t) for t in texts]
@@ -282,6 +286,45 @@ def hard_checks(src: str, tgt: str):
 
 
 # ---------------------------------------------------------------------------
+# Negation check (v2): "if you notice bleeding" must not become "if you do NOT ..."
+# ---------------------------------------------------------------------------
+
+# English: grammatical negation plus words that Kazakh normally renders with a negative verb
+# ("failed to finish" -> аяқтай алмады, "despite" -> қарамастан, "avoid" -> болдырмау).
+# The prefix un- is NOT counted: "unusual bleeding" is correctly "әдеттен тыс", without negation.
+_EN_NEG_RE = re.compile(
+    r"\b(not|never|no|none|nothing|nobody|neither|nor|without|unless|cannot|"
+    r"unable|fail(?:s|ed|ing)?|avoid(?:s|ed|ing)?|despite|instead|"
+    r"ban(?:s|ned)?|forbid(?:s|den)?|prohibit(?:s|ed)?|refus(?:e|es|ed|ing)|lack(?:s|ed|ing)?|seldom|rarely|"
+    r"invisible|obsolete|untapped)\b|n't\b", re.IGNORECASE)
+# Kazakh negation: separate words, and the verbal negative suffix -ма/-ме/-ба/-бе/-па/-пе
+# followed by a typical verb ending (imperative, conditional, participle, verbal noun, gerund).
+_KK_NEG_WORDS_RE = re.compile(r"(?<![а-яәғқңөұүһі])(емес|жоқ|ешқашан|ешбір|ештеңе|ешкім|ешқандай|ешқайда)")
+_KK_NEG_VERB_RE = re.compile(
+    r"[а-яәғқңөұүһі]{2,}(ма|ме|ба|бе|па|пе)"
+    r"(ңыз|ңіз|ңдар|ңдер|са|се|саңыз|сеңіз|сақ|сек|ған|ген|қан|кен|ды|ді|йды|йді|йтын|йтін|у|уы|уі|уға|уге|"
+    r"ймын|ймін|йсыз|йсіз|йміз|ймыз|стан|стен|й|йынша|йінше|ғандықтан|гендіктен)"
+    r"(?![а-яәғқңөұүһі])")
+
+
+def negation_counts(src: str, tgt: str):
+    en = len(_EN_NEG_RE.findall(src))
+    t = tgt.lower()
+    kk = len(_KK_NEG_WORDS_RE.findall(t)) + len(_KK_NEG_VERB_RE.findall(t))
+    return en, kk
+
+
+def check_negation(src: str, tgt: str):
+    """Flag when the number of negations differs between source and translation."""
+    en, kk = negation_counts(src, tgt)
+    if en == kk:
+        return []
+    if kk > en:
+        return [f"negation added: {kk} in translation vs {en} in original"]
+    return [f"negation lost: {kk} in translation vs {en} in original"]
+
+
+# ---------------------------------------------------------------------------
 # Back-translation score and verdict
 # ---------------------------------------------------------------------------
 
@@ -306,6 +349,8 @@ KK_REASON = {
     "dosage": "Дәрі мөлшерінің бірлігі (мг, мл) жоғалып кетті.",
     "date": "Күн немесе ай атауы өзгерді.",
     "back-translation": "Кері аударма түпнұсқаның мағынасынан алыс.",
+    "negation": "«Емес / жоқ / -ма, -ме» түпнұсқадағыдай емес: мағынасы керісінше болуы мүмкін.",
+    "risk": "Бірнеше белгі бойынша бұл аударма қате болуы ықтимал.",
 }
 
 
@@ -317,3 +362,52 @@ def kk_reasons(reasons):
                 if text not in out:
                     out.append(text)
     return out
+
+
+# ---------------------------------------------------------------------------
+# v2 signals and combined score
+# ---------------------------------------------------------------------------
+
+_labse = None
+
+
+def labse_similarity(src_texts, tgt_texts):
+    """Cosine similarity of LaBSE sentence embeddings (English source vs Kazakh translation)."""
+    global _labse
+    if _labse is None:
+        from sentence_transformers import SentenceTransformer
+        _labse = SentenceTransformer(LABSE_NAME)
+    a = _labse.encode(list(src_texts), normalize_embeddings=True, batch_size=32)
+    b = _labse.encode(list(tgt_texts), normalize_embeddings=True, batch_size=32)
+    return [float((x * y).sum()) for x, y in zip(a, b)]
+
+
+V2_FEATURES = ["bt_chrf", "bt_big_chrf", "agree_chrf", "labse", "hard_flag", "neg_flag"]
+
+
+def v2_signals(src_texts, mt_texts):
+    """All v2 signals for (English source, Kazakh translation from the 600M model) pairs."""
+    src_texts, mt_texts = list(src_texts), list(mt_texts)
+    back = translate(mt_texts, "kaz_Cyrl", "eng_Latn")
+    back_big = translate(mt_texts, "kaz_Cyrl", "eng_Latn", model_name=BIG_MODEL_NAME)
+    mt_big = translate(src_texts, "eng_Latn", "kaz_Cyrl", model_name=BIG_MODEL_NAME)
+    sims = labse_similarity(src_texts, mt_texts)
+    rows = []
+    for s_, t_, b_, bb, mb, sim in zip(src_texts, mt_texts, back, back_big, mt_big, sims):
+        hard = hard_checks(s_, t_)
+        neg = check_negation(s_, t_)
+        rows.append({"back_en": b_, "back_en_big": bb, "mt_big": mb,
+                     "bt_chrf": sentence_chrf(b_, s_), "bt_big_chrf": sentence_chrf(bb, s_),
+                     "agree_chrf": sentence_chrf(t_, mb), "labse": sim,
+                     "hard_flag": float(bool(hard)), "neg_flag": float(bool(neg)),
+                     "reasons": hard + neg})
+    return rows
+
+
+def v2_risk(features: dict, model: dict) -> float:
+    """Probability that the translation is bad, from the logistic model saved by the notebook."""
+    import math
+    z = model["intercept"]
+    for name, coef, mu, sd in zip(model["features"], model["coef"], model["mean"], model["std"]):
+        z += coef * (features[name] - mu) / (sd or 1.0)
+    return 1.0 / (1.0 + math.exp(-z))

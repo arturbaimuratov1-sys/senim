@@ -44,7 +44,7 @@ if IN_COLAB:
     else:
         subprocess.run(["git", "-C", "/content/senim", "pull", "-q"], check=True)
     os.chdir("/content/senim")
-subprocess.run([sys.executable, "-m", "pip", "install", "-q", "sacrebleu"], check=True)
+subprocess.run([sys.executable, "-m", "pip", "install", "-q", "sacrebleu", "sentence-transformers"], check=True)
 sys.path.insert(0, os.getcwd())
 os.makedirs("results", exist_ok=True)
 
@@ -362,13 +362,147 @@ if ratings_filled():
     plt.tight_layout(); plt.savefig("results/rating_vs_chrf.png", dpi=150); plt.show()
 """)
 
-md("## 9. Text summary of all results")
+md("""
+## 9. Senim v2: a smarter trust check
+
+What v1 missed (from the human ratings): flipped negations, wrong words, and cases where the back-translation "repairs" the error.
+v2 adds four signals and combines them:
+
+| signal | idea |
+|---|---|
+| `neg_flag` | the number of negations ("not", "never", "without"… vs Kazakh "емес", "жоқ", verb suffix -ма/-ме) differs |
+| `bt_big_chrf` | back-translation by a **different, bigger** model (NLLB 1.3B), so it is less likely to "repair" the 600M model's error |
+| `agree_chrf` | chrF between the 600M translation and an independent 1.3B translation: if two models disagree, be careful |
+| `labse` | LaBSE cosine similarity between the English source and the Kazakh translation (meaning, no back-translation) |
+
+plus v1's `bt_chrf` and `hard_flag`. A logistic regression combines them.
+
+**Rules, fixed before running this section:** same split as before (seed 2026); the model and its alarm threshold are fitted on the calibration half only; the test half is used once.
+The test half had already been looked at for v1, and the negation idea came from errors seen across the whole rated set, so we also report **cross-validation over all 90** (5 folds × 20 repeats), which does not depend on one split.
+The translations shown to the user still come from the 600M model, because those are the ones the human rated.
+""")
+
+code("""
+import time
+t0 = time.time()
+fl_sig = pd.DataFrame(senim.v2_signals(flores["eng_Latn"].tolist(), flores["mt_kaz_Cyrl"].tolist()))
+own_sig = pd.DataFrame(senim.v2_signals(own["text_en"].tolist(), own["mt_kaz"].tolist())) if len(own) else pd.DataFrame()
+print(f"v2 signals computed in {time.time() - t0:.0f}s")
+
+# Is the bigger model a better translator? (FLORES, corpus chrF)
+rows = []
+for code_, name in LANGS.items():
+    hyp_big = fl_sig["mt_big"].tolist() if code_ == "kaz_Cyrl" else senim.translate(flores["eng_Latn"].tolist(), "eng_Latn", code_, model_name=senim.BIG_MODEL_NAME)
+    big = sacrebleu.corpus_chrf(hyp_big, [flores[code_].tolist()]).score
+    small = float(chrf_table.loc[chrf_table["code"] == code_, "chrF_NLLB"].iloc[0])
+    rows.append({"language": name, "n": len(flores), "chrF_600M": round(small, 1), "chrF_1.3B": round(big, 1)})
+chrf_v2 = pd.DataFrame(rows); chrf_v2.to_csv("results/v2_chrf_600m_vs_1p3b.csv", index=False); display(chrf_v2)
+
+# How noisy is the negation check on PERFECT translations? (professional FLORES references)
+ref_counts = [senim.negation_counts(s_, r_) for s_, r_ in zip(flores["eng_Latn"], flores["kaz_Cyrl"])]
+neg_ref_fp = sum(a != b for a, b in ref_counts)
+print(f"negation check fires on {neg_ref_fp} of {len(flores)} professional reference translations (false-alarm floor)")
+""")
+
+code("""
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import roc_auc_score
+from sklearn.model_selection import RepeatedStratifiedKFold
+
+if ratings_filled():
+    sig = pd.concat([
+        own_sig.assign(id="own_" + own["id"].astype(str).values, src_type=own["type"].values) if len(own) else pd.DataFrame(),
+        fl_sig.assign(id="flores_" + flores["id"].astype(str).values, src_type="flores"),
+    ], ignore_index=True)
+    d2 = ratings[["id", "rating", "llm"]].merge(sig, on="id", how="left")
+    F = senim.V2_FEATURES
+    X = d2[F].astype(float).values
+    d2["v1_score"] = d2["hard_flag"] * 1000 - d2["bt_chrf"]   # v1 ranking: hard flag first, then low back-translation chrF
+
+    # 1) Each signal alone: ROC AUC over all 90 (no threshold, no fitting). Higher = better at ranking bad above good.
+    auc_rows = []
+    for cut in (3, 2):
+        y = (d2["rating"] <= cut).astype(int).values
+        for name, score in [("v1 (hard checks + back-translation)", d2["v1_score"]), ("back-translation chrF (600M)", -d2["bt_chrf"]),
+                            ("back-translation chrF (1.3B)", -d2["bt_big_chrf"]), ("agreement with 1.3B", -d2["agree_chrf"]),
+                            ("LaBSE similarity", -d2["labse"]), ("hard checks", d2["hard_flag"]), ("negation check", d2["neg_flag"])]:
+            auc_rows.append({"bad_definition": f"rating <= {cut}", "signal": name, "n": len(d2), "bad": int(y.sum()), "auc": round(roc_auc_score(y, score), 3)})
+    auc_tab = pd.DataFrame(auc_rows); auc_tab.to_csv("results/v2_signal_auc.csv", index=False); display(auc_tab)
+
+    # 2) Cross-validated AUC of the combined model vs v1 (all 90, 5 folds x 20 repeats)
+    cv_rows = []
+    for cut in (3, 2):
+        y = (d2["rating"] <= cut).astype(int).values
+        rskf = RepeatedStratifiedKFold(n_splits=5, n_repeats=20, random_state=2026)
+        a_v1, a_v2 = [], []
+        for tr, te in rskf.split(X, y):
+            sc = StandardScaler().fit(X[tr]); lr = LogisticRegression(C=1.0, max_iter=1000).fit(sc.transform(X[tr]), y[tr])
+            a_v2.append(roc_auc_score(y[te], lr.predict_proba(sc.transform(X[te]))[:, 1]))
+            a_v1.append(roc_auc_score(y[te], d2["v1_score"].values[te]))
+        cv_rows.append({"bad_definition": f"rating <= {cut}", "auc_v1_mean": round(np.mean(a_v1), 3), "auc_v1_sd": round(np.std(a_v1), 3),
+                        "auc_v2_mean": round(np.mean(a_v2), 3), "auc_v2_sd": round(np.std(a_v2), 3),
+                        "v2_better_in_share_of_folds": round(np.mean(np.array(a_v2) > np.array(a_v1)), 3)})
+    cv_tab = pd.DataFrame(cv_rows); cv_tab.to_csv("results/v2_cv_auc.csv", index=False); display(cv_tab)
+""")
+
+code("""
+if ratings_filled():
+    perm = np.random.default_rng(2026).permutation(len(d2))   # same split as v1
+    ci, ti = perm[: len(d2) // 2], perm[len(d2) // 2:]
+    calib2, test2 = d2.iloc[ci], d2.iloc[ti]
+    y_c3 = (calib2["rating"] <= 3).astype(int).values
+    sc = StandardScaler().fit(calib2[F].astype(float).values)
+    lr = LogisticRegression(C=1.0, max_iter=1000).fit(sc.transform(calib2[F].astype(float).values), y_c3)
+    p_c = lr.predict_proba(sc.transform(calib2[F].astype(float).values))[:, 1]
+    p_t = lr.predict_proba(sc.transform(test2[F].astype(float).values))[:, 1]
+
+    def best_thr(p, y):
+        cands = sorted(set(np.round(p, 3)) | {0.0, 1.01})
+        f1s = lambda t: (2 * ((p >= t) & (y == 1)).sum()) / max(2 * ((p >= t) & (y == 1)).sum() + ((p >= t) & (y == 0)).sum() + ((p < t) & (y == 1)).sum(), 1)
+        return max(cands, key=lambda t: (f1s(t), t))   # ties -> higher threshold (fewer alarms)
+
+    v1_thr = json.load(open("results/threshold.json"))["all"]
+    rows2, thr2 = [], {}
+    for cut in (3, 2):
+        y_c, y_t = (calib2["rating"] <= cut).values, (test2["rating"] <= cut).values
+        t_ = best_thr(p_c, y_c.astype(int)); thr2[f"bad_if_rating_le_{cut}"] = float(t_)
+        v1_flags = (test2["hard_flag"] > 0) | (test2["bt_chrf"] < v1_thr[f"bad_if_rating_le_{cut}"])
+        for system, flags in [("always trust (baseline)", pd.Series(False, index=test2.index)),
+                              ("v1: hard checks + back-translation", v1_flags),
+                              ("v1 + negation check", v1_flags | (test2["neg_flag"] > 0)),
+                              (f"v2: combined model (p >= {t_:.3f})", pd.Series(p_t >= t_, index=test2.index))]:
+            rows2.append({"bad_definition": f"rating <= {cut}", "split": "test", "system": system, **scores(test2, flags, pd.Series(y_t, index=test2.index))})
+        rows2.append({"bad_definition": f"rating <= {cut}", "split": "test", "system": "v2 ranking quality (AUC)", "n": len(test2),
+                      "bad": int(y_t.sum()), "auc": round(roc_auc_score(y_t, p_t), 3)})
+    trust_v2 = pd.DataFrame(rows2); trust_v2.to_csv("results/v2_trust_check_eval.csv", index=False); display(trust_v2)
+
+    coef = pd.DataFrame({"feature": F, "coef_standardized": lr.coef_[0].round(3)}); coef.to_csv("results/v2_model_coefficients.csv", index=False); display(coef)
+    json.dump({"features": F, "coef": lr.coef_[0].tolist(), "intercept": float(lr.intercept_[0]),
+               "mean": sc.mean_.tolist(), "std": sc.scale_.tolist(), "threshold": thr2["bad_if_rating_le_3"], "all_thresholds": thr2,
+               "trained_on": "calibration half of data/ratings.csv (human ratings, bad = rating <= 3)", "n_train": len(calib2)},
+              open("results/trust_model_v2.json", "w"), indent=2)
+
+    fig, ax = plt.subplots(figsize=(7, 3.6))
+    a3 = auc_tab[auc_tab["bad_definition"] == "rating <= 3"].set_index("signal")["auc"]
+    a3 = pd.concat([a3, pd.Series({"v2 combined (cross-validated)": float(cv_tab.loc[0, "auc_v2_mean"])})]).sort_values()
+    ax.barh(a3.index, a3.values, color=["#e07a5f" if "v2" in i else "#2a6f97" for i in a3.index])
+    ax.axvline(0.5, color="#999", ls="--", lw=1); ax.set_xlim(0.4, 1.0)
+    for i, v in enumerate(a3.values): ax.text(v + 0.005, i, f"{v:.2f}", va="center", fontsize=8)
+    ax.set_xlabel("ROC AUC vs human 'bad' (rating <= 3), n = 90   (0.5 = coin flip)")
+    ax.spines[["top", "right"]].set_visible(False)
+    plt.tight_layout(); plt.savefig("results/v2_signal_auc.png", dpi=150); plt.show()
+""")
+
+md("## 10. Text summary of all results")
 
 code("""
 import glob
 for f in ["results/chrf_by_language.csv", "results/worst5_kaz.csv", "results/human_vs_llm_agreement.csv", "results/human_vs_llm_confusion.csv",
           "results/rating_vs_chrf_correlation.csv", "results/trust_check_eval.csv", "results/threshold.json",
-          "results/rating_vs_chrf_correlation_llm.csv", "results/trust_check_eval_llm.csv", "results/threshold_llm.json"]:
+          "results/rating_vs_chrf_correlation_llm.csv", "results/trust_check_eval_llm.csv", "results/threshold_llm.json",
+          "results/v2_chrf_600m_vs_1p3b.csv", "results/v2_signal_auc.csv", "results/v2_cv_auc.csv", "results/v2_trust_check_eval.csv",
+          "results/v2_model_coefficients.csv", "results/trust_model_v2.json"]:
     if os.path.exists(f):
         print(f"===== {f}"); print(open(f, encoding="utf-8").read())
 print(f"Spearman(back-translation chrF, reference chrF), FLORES kaz n={len(flores)}: {rho:.3f} (p={p:.1e})")
@@ -376,9 +510,15 @@ print("FLORES sentences flagged by hard checks:", int((flores["hard_check_reason
 if len(own):
     print("own sentences flagged by hard checks:", int((own["hard_check_reasons"] != "").sum()), "of", len(own))
     print("own set mean back-translation chrF:", round(own["bt_chrf"].mean(), 1), "| FLORES:", round(flores["bt_chrf"].mean(), 1))
+if "neg_ref_fp" in globals():
+    print(f"negation check on professional references: fires on {neg_ref_fp} of {len(flores)}")
+    if ratings_filled():
+        print("negation check on rated translations: fires on", int(d2["neg_flag"].sum()), "of", len(d2),
+              "| of these rated bad (<=3) by human:", int(((d2["neg_flag"] > 0) & (d2["rating"] <= 3)).sum()),
+              "| serious (<=2):", int(((d2["neg_flag"] > 0) & (d2["rating"] <= 2)).sum()))
 """)
 
-md("## 10. Save everything")
+md("## 11. Save everything")
 
 code("""
 import shutil
