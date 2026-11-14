@@ -195,7 +195,7 @@ We also combined all six signals in a logistic regression. The procedure was fix
 
 | Signal | AUC, bad = ≤ 3 | AUC, serious = ≤ 2 |
 |---|---|---|
-| **v1 (hard checks + back-translation)** | **0.72** | **0.80** |
+| **v1 (hard checks + back-translation)** | **0.715** | **0.80** |
 | back-translation chrF (600M) | 0.71 | 0.78 |
 | back-translation chrF (1.3B) | 0.68 | 0.78 |
 | agreement with 1.3B | 0.68 | 0.65 |
