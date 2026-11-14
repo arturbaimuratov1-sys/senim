@@ -73,7 +73,9 @@ _EN_UNITS = {"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "s
              "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
              "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17,
              "eighteen": 18, "nineteen": 19, "once": 1, "twice": 2, "thrice": 3,
-             "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6,
+             # "first"/"second" are left out on purpose: usually not quantities
+             # ("first aid", "first cases", "a second opinion").
+             "third": 3, "fourth": 4, "fifth": 5, "sixth": 6,
              "seventh": 7, "eighth": 8, "ninth": 9, "tenth": 10, "eleventh": 11, "twelfth": 12}
 _EN_TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60,
             "seventy": 70, "eighty": 80, "ninety": 90}
@@ -84,11 +86,50 @@ _KK_UNITS = {"бір": 1, "екі": 2, "үш": 3, "төрт": 4, "бес": 5, "�
 _KK_TENS = {"он": 10, "жиырма": 20, "отыз": 30, "қырық": 40, "елу": 50, "алпыс": 60,
             "жетпіс": 70, "сексен": 80, "тоқсан": 90}
 _KK_MULT = {"жүз": 100, "мың": 1000}
-# Kazakh suffixes allowed after a number word (ordinal, distributive, case endings).
+# Kazakh suffixes allowed after a number word (ordinal, distributive, possessive, case endings).
 _KK_SUFFIXES = ("", "інші", "ыншы", "ншы", "нші", "ден", "дан", "тен", "тан", "еу", "ау",
-                "ге", "ға", "ке", "қа", "де", "да", "те", "та", "нің", "ның", "дің", "дың")
+                "ге", "ға", "ке", "қа", "де", "да", "те", "та", "нің", "ның", "дің", "дың",
+                "і", "ы", "сі", "сы", "іне", "ына", "ден", "нен", "нан")
+# "он" (10) + a vowel/locative suffix collides with common words ("оны" = him, "онда" = there).
+_KK_SUFFIXES_ON = ("", "ыншы", "ға", "нан", "нің")
 
 _DIGIT_RE = re.compile(r"\d+(?:[.,]\d+)?")
+# Clock times: "6:00 PM", "9:30 am", "18:00", "7.15". A dot only counts as a time separator
+# next to AM/PM (English) or when the source has times (Kazakh "7.15-де"); otherwise
+# "3.50 m" is a decimal number.
+_TIME_COLON_RE = re.compile(r"\b(\d{1,2}):(\d{2})\s*(a\.?m\.?|p\.?m\.?)?(?![\d])", re.IGNORECASE)
+_TIME_DOT_AMPM_RE = re.compile(r"\b(\d{1,2})\.(\d{2})\s*(a\.?m\.?|p\.?m\.?)(?![a-z])", re.IGNORECASE)
+_TIME_ANY_RE = re.compile(r"\b(\d{1,2})[:.](\d{2})()(?![\d])")
+_AMPM_RE = re.compile(r"\b(\d{1,2})\s*(a\.?m\.?|p\.?m\.?)(?![a-z])", re.IGNORECASE)
+
+
+def _times(text: str, allow_ampm_without_minutes: bool, dot_times: bool = False):
+    """Return (list of acceptable (h, m) forms per time, text with times removed)."""
+    found = []
+
+    def forms(h, m, ampm):
+        h, m = int(h), int(m)
+        if ampm:
+            pm = ampm.lower().startswith("p")
+            h24 = (h % 12) + (12 if pm else 0)
+            return {(h24, m), (h, m)}  # "6:00 PM" may be written as 18:00 or 6:00
+        return {(h, m)}
+
+    def sub_time(mt):
+        found.append(forms(mt.group(1), mt.group(2), mt.group(3)))
+        return " "
+
+    if dot_times:
+        text = _TIME_ANY_RE.sub(sub_time, text)
+    else:
+        text = _TIME_COLON_RE.sub(sub_time, text)
+        text = _TIME_DOT_AMPM_RE.sub(sub_time, text)
+    if allow_ampm_without_minutes:
+        def sub_ampm(mt):
+            found.append(forms(mt.group(1), 0, mt.group(2)))
+            return " "
+        text = _AMPM_RE.sub(sub_ampm, text)
+    return found, text
 
 
 def _norm_num(s: str) -> float:
@@ -100,9 +141,21 @@ def _digit_numbers(text: str):
 
 
 def _parse_words(tokens, units, tens, mult):
-    """Turn a token stream into numbers by summing consecutive number words."""
+    """Turn a token stream into numbers by summing consecutive number words.
+    A token ending with "|" closes the number (a Kazakh case suffix ends a compound:
+    "бірден қырыққа" is 1 and 40, not 41)."""
     nums, cur, active = [], 0, False
     for t in tokens:
+        closes = t.endswith("|")
+        t = t.rstrip("|")
+        if closes and t in {**units, **tens, **mult}:
+            if t in mult:
+                cur = (cur or 1) * mult[t]
+            else:
+                cur += {**units, **tens}[t]
+            nums.append(float(cur))
+            cur, active = 0, False
+            continue
         if t in units:
             cur += units[t]; active = True
         elif t in tens:
@@ -124,10 +177,20 @@ def _en_word_numbers(text: str):
 
 
 def _kk_token_value(tok: str):
+    """Map a Kazakh token to its number word; append "|" if it carries a suffix."""
     for table in (_KK_UNITS, _KK_TENS, _KK_MULT):
-        for word, val in table.items():
-            if tok.startswith(word) and tok[len(word):] in _KK_SUFFIXES:
-                return word
+        for word in table:
+            # Final consonant alternation before a vowel suffix: қырық -> қырығы.
+            stems = {word}
+            if word[-1] in "кқп":
+                stems.add(word[:-1] + {"к": "г", "қ": "ғ", "п": "б"}[word[-1]])
+            for stem in stems:
+                if not tok.startswith(stem):
+                    continue
+                rest = tok[len(stem):]
+                allowed = _KK_SUFFIXES_ON if word == "он" else _KK_SUFFIXES
+                if rest in allowed:
+                    return word + ("|" if rest else "")
     return None
 
 
@@ -142,10 +205,24 @@ def check_numbers(src: str, tgt: str):
     number in the translation must come from the source. Number words count
     ("two" == "екі" == 2), but Kazakh 'бір' alone is not counted as an extra number
     because it is also the indefinite article."""
+    reasons = []
+    # Clock times are compared as times first, then removed from the text.
+    src_times, src = _times(src, allow_ampm_without_minutes=True)
+    tgt_times, tgt = _times(tgt, allow_ampm_without_minutes=False, dot_times=bool(src_times))
+    tgt_time_set = set().union(*tgt_times) if tgt_times else set()
+    src_time_set = set().union(*src_times) if src_times else set()
+    bad_src = [f for f in src_times if not (f & tgt_time_set)]
+    bad_tgt = [f for f in tgt_times if not (f & src_time_set)]
+    if bad_src:
+        reasons.append("time missing or changed: " + ", ".join(
+            "%d:%02d" % min(f) for f in bad_src))
+    if bad_tgt:
+        reasons.append("time not in the original: " + ", ".join(
+            "%d:%02d" % min(f) for f in bad_tgt))
+
     src_nums = _digit_numbers(src) + _en_word_numbers(src)
     tgt_digits = _digit_numbers(tgt)
     tgt_all = tgt_digits + _kk_word_numbers(tgt)
-    reasons = []
     missing = sorted({n for n in src_nums if n not in tgt_all})
     extra = sorted({n for n in tgt_digits if n not in src_nums})
     fmt = lambda xs: ", ".join(str(int(x)) if x.is_integer() else str(x) for x in xs)
@@ -175,13 +252,15 @@ def check_units(src: str, tgt: str):
     return reasons
 
 
+# Regex stems; "қыркүйе[кг]" covers the к->г alternation ("қыркүйегінде").
+# Weekdays include the common colloquial forms (шейшембі, шаршамбы, бейшембі).
 _MONTHS = {"january": "қаңтар", "february": "ақпан", "march": "наурыз", "april": "сәуір",
            "may": "мамыр", "june": "маусым", "july": "шілде", "august": "тамыз",
-           "september": "қыркүйек", "october": "қазан", "november": "қараша",
+           "september": "қыркүйе[кг]", "october": "қазан", "november": "қараша",
            "december": "желтоқсан"}
-_WEEKDAYS = {"monday": "дүйсенбі", "tuesday": "сейсенбі", "wednesday": "сәрсенбі",
-             "thursday": "бейсенбі", "friday": "жұма", "saturday": "сенбі",
-             "sunday": "жексенбі"}
+_WEEKDAYS = {"monday": "дүйсенбі", "tuesday": "(сейсенбі|шейшембі)",
+             "wednesday": "(сәрсенбі|шаршамбы)", "thursday": "(бейсенбі|бейшембі)",
+             "friday": "жұма", "saturday": "сенбі", "sunday": "жексенбі"}
 
 
 def check_dates(src: str, tgt: str):
@@ -223,6 +302,7 @@ def verdict(src: str, tgt: str, back: str, threshold: float = DEFAULT_BT_THRESHO
 # Plain-language reason texts shown to a Kazakh-speaking user.
 KK_REASON = {
     "number": "Сандар түпнұсқамен сәйкес келмейді.",
+    "time": "Уақыт (сағат) түпнұсқамен сәйкес келмейді.",
     "dosage": "Дәрі мөлшерінің бірлігі (мг, мл) жоғалып кетті.",
     "date": "Күн немесе ай атауы өзгерді.",
     "back-translation": "Кері аударма түпнұсқаның мағынасынан алыс.",
