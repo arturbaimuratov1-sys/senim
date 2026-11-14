@@ -28,7 +28,7 @@ Steps:
 3. Show the 5 worst Kazakh translations.
 4. Translate our own set (`data/own_set.csv`: medicine leaflets and school letters).
 5. Trust check: numbers / dosages / dates + back-translation chrF.
-6. With human ratings (`data/ratings.csv`): correlation with chrF, and how many bad translations the trust check catches vs. "always trust".
+6. With quality ratings (`data/ratings.csv`, given by an LLM judge, see below): correlation with chrF, and how many bad translations the trust check catches vs. "always trust".
 
 *This project is a prototype and is not medical advice.*
 """)
@@ -193,7 +193,7 @@ plt.tight_layout(); plt.savefig("results/bt_vs_reference_chrf.png", dpi=150); pl
 md("""
 ## 6. Our own set: medicine leaflets and school letters
 
-`data/own_set.csv` is written by a human (columns `id, text_en, type`).
+`data/own_set.csv` was written by the project author (columns `id, text_en, type`).
 """)
 
 code("""
@@ -213,7 +213,7 @@ else:
 """)
 
 md("""
-## 7. Rating sheet for a human
+## 7. Rating sheet
 
 ~90 translations (all own sentences + 40 random FLORES ones), shuffled, **without** chrF or trust labels so the rater is not biased.
 Written to `results/ratings_template.csv` only if `data/ratings.csv` has no ratings yet.
@@ -241,7 +241,11 @@ else:
 """)
 
 md("""
-## 8. Evaluation against human ratings
+## 8. Evaluation against quality ratings
+
+**Who rated:** the 1-5 ratings in `data/ratings.csv` were given by **Claude Opus 5.5 acting as an LLM judge** (column `rater`), not by a fluent human rater.
+The author read the translations and judged them as "meaning mostly conveyed, but not exact, and some Russian words appear", but did not rate them one by one.
+Treat every number below as agreement with an LLM judge, not with people.
 
 **Pre-registered rules (fixed before seeing ratings):**
 - A translation is **bad** if `rating_1_5 <= 3` (meaning partly wrong or worse — not safe for a medicine leaflet). We also report `<= 2`.
@@ -282,17 +286,17 @@ if ratings_filled():
             corr_rows.append({"metric": "back-translation chrF (no reference)", "subset": name, "n": len(sub),
                               "spearman": round(r_s[0], 3), "spearman_p": r_s[1], "pearson": round(r_p[0], 3)})
     corr = pd.DataFrame(corr_rows)
-    corr.to_csv("results/human_vs_chrf_correlation.csv", index=False)
+    corr.to_csv("results/rating_vs_chrf_correlation.csv", index=False)
     display(corr)
 
     fig, axes = plt.subplots(1, 2, figsize=(9, 3.5))
     jit = np.random.default_rng(0).uniform(-0.12, 0.12, len(ev))
     axes[0].scatter(fl["ref_chrf"], fl["rating"] + jit[:len(fl)], s=16, color="#2a6f97")
-    axes[0].set_xlabel("chrF vs reference"); axes[0].set_ylabel("human rating (1-5)"); axes[0].set_title("FLORES rated", fontsize=10)
+    axes[0].set_xlabel("chrF vs reference"); axes[0].set_ylabel("LLM-judge rating (1-5)"); axes[0].set_title("FLORES rated", fontsize=10)
     axes[1].scatter(ev["bt_chrf"], ev["rating"] + jit, s=16, c=np.where(ev["src_type"] == "flores", "#2a6f97", "#e07a5f"))
     axes[1].set_xlabel("back-translation chrF"); axes[1].set_title("all rated (orange = own set)", fontsize=10)
     for a in axes: a.spines[["top", "right"]].set_visible(False)
-    plt.tight_layout(); plt.savefig("results/human_vs_chrf.png", dpi=150); plt.show()
+    plt.tight_layout(); plt.savefig("results/rating_vs_chrf.png", dpi=150); plt.show()
 """)
 
 code("""
@@ -335,7 +339,22 @@ if ratings_filled():
     display(trust_eval)
 """)
 
-md("## 9. Save everything")
+md("## 9. Text summary of all results")
+
+code("""
+import glob
+for f in ["results/chrf_by_language.csv", "results/worst5_kaz.csv", "results/rating_vs_chrf_correlation.csv",
+          "results/trust_check_eval.csv", "results/threshold.json"]:
+    if os.path.exists(f):
+        print(f"===== {f}"); print(open(f, encoding="utf-8").read())
+print(f"Spearman(back-translation chrF, reference chrF), FLORES kaz n={len(flores)}: {rho:.3f} (p={p:.1e})")
+print("FLORES sentences flagged by hard checks:", int((flores["hard_check_reasons"] != "").sum()), "of", len(flores))
+if len(own):
+    print("own sentences flagged by hard checks:", int((own["hard_check_reasons"] != "").sum()), "of", len(own))
+    print("own set mean back-translation chrF:", round(own["bt_chrf"].mean(), 1), "| FLORES:", round(flores["bt_chrf"].mean(), 1))
+""")
+
+md("## 10. Save everything")
 
 code("""
 import shutil
