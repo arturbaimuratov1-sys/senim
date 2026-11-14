@@ -98,7 +98,8 @@ flores.head(3)
 md("## 2. Translate with NLLB-200 (600M distilled)")
 
 code("""
-import time, senim
+import time, importlib, senim
+importlib.reload(senim)  # pick up the latest senim.py even if the runtime was not restarted
 t0 = time.time()
 first = senim.translate([flores.loc[0, "eng_Latn"]], "eng_Latn", "kaz_Cyrl")[0]
 print("EN:", flores.loc[0, "eng_Latn"])
