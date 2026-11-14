@@ -28,7 +28,7 @@ Steps:
 3. Show the 5 worst Kazakh translations.
 4. Translate our own set (`data/own_set.csv`: medicine leaflets and school letters).
 5. Trust check: numbers / dosages / dates + back-translation chrF.
-6. With quality ratings (`data/ratings.csv`, given by an LLM judge, see below): correlation with chrF, and how many bad translations the trust check catches vs. "always trust".
+6. With quality ratings (`data/ratings.csv`: human ratings by the author, plus an LLM judge for comparison): correlation with chrF, and how many bad translations the trust check catches vs. "always trust".
 
 *This project is a prototype and is not medical advice.*
 """)
@@ -243,60 +243,58 @@ else:
 md("""
 ## 8. Evaluation against quality ratings
 
-**Who rated:** the 1-5 ratings in `data/ratings.csv` were given by **Claude Opus 5.5 acting as an LLM judge** (column `rater`), not by a fluent human rater.
-The author read the translations and judged them as "meaning mostly conveyed, but not exact, and some Russian words appear", but did not rate them one by one.
-Treat every number below as agreement with an LLM judge, not with people.
+**Who rated.** `data/ratings.csv` holds two sets of 1-5 ratings for the same 90 translations:
+- `rating_1_5`: the **project author** (human), who rated each translation, says they did it without looking at the AI's numbers, and wrote a comment and a corrected version for each (`human_comment`, `human_correction`). **This is the primary rating.**
+- `llm_rating`: **Claude Opus 5.5 acting as an LLM judge**, written down earlier. Kept for comparison and as a robustness check.
 
-**Pre-registered rules (fixed before seeing ratings):**
-- A translation is **bad** if `rating_1_5 <= 3` (meaning partly wrong or worse — not safe for a medicine leaflet). We also report `<= 2`.
+One human rater, so human-human agreement cannot be measured.
+
+**Pre-registered rules (fixed before the first ratings existed):**
+- A translation is **bad** if rating `<= 3` (meaning partly wrong or worse; not safe for a medicine leaflet). We also report `<= 2`.
 - Ratings are split 50/50 at random (seed 2026) into a **calibration** part and a **test** part.
   The back-translation threshold is chosen on calibration only (maximise F1 for catching bad translations); all reported trust numbers are on the test part.
 - Baseline: **always trust** (never warns).
+- The whole procedure was first run with the LLM ratings; the human ratings arrived afterwards, and the same procedure is applied to them without changes. Both results are reported.
 """)
 
 code("""
 import json
+from sklearn.metrics import cohen_kappa_score
 if not ratings_filled():
     print("data/ratings.csv has no ratings yet -> evaluation skipped.")
 else:
     ratings = pd.read_csv("data/ratings.csv", dtype=str).fillna("")
     ratings = ratings[ratings["rating_1_5"].str.strip() != ""].copy()
     ratings["rating"] = ratings["rating_1_5"].astype(float)
+    ratings["llm"] = ratings["llm_rating"].astype(float)
     feats = pd.concat([
         pd.DataFrame({"id": "own_" + own["id"].astype(str), "bt_chrf": own["bt_chrf"], "hard": own["hard_check_reasons"], "ref_chrf": np.nan, "src_type": own["type"]}) if len(own) else pd.DataFrame(),
         pd.DataFrame({"id": "flores_" + flores["id"].astype(str), "bt_chrf": flores["bt_chrf"], "hard": flores["hard_check_reasons"], "ref_chrf": flores["chrf_kaz"], "src_type": "flores"}),
     ], ignore_index=True)
     ev = ratings.merge(feats, on="id", how="left")
     print("rated translations:", len(ev), "| by source:", dict(ev["src_type"].value_counts()))
-    print("rating distribution:", dict(ev["rating"].value_counts().sort_index()))
-    print("error types:", dict(ev["error_type"].replace("", "(none)").value_counts()))
+    print("human rating distribution:", dict(ev["rating"].value_counts().sort_index()))
+    print("LLM rating distribution:  ", dict(ev["llm"].value_counts().sort_index()))
+    print("mean human rating by group:"); print(ev.groupby("src_type")["rating"].agg(["count", "mean"]).round(2))
+    print("mean LLM rating by group:"); print(ev.groupby("src_type")["llm"].agg(["count", "mean"]).round(2))
 """)
 
 code("""
 if ratings_filled():
-    corr_rows = []
-    fl = ev.dropna(subset=["ref_chrf"])
-    if len(fl) >= 5:
-        r_s = spearmanr(fl["rating"], fl["ref_chrf"]); r_p = pearsonr(fl["rating"], fl["ref_chrf"])
-        corr_rows.append({"metric": "chrF vs Kazakh reference", "subset": "FLORES rated", "n": len(fl),
-                          "spearman": round(r_s[0], 3), "spearman_p": r_s[1], "pearson": round(r_p[0], 3)})
-    for name, sub in [("all rated", ev), ("own set", ev[ev["src_type"] != "flores"]), ("FLORES rated", fl)]:
-        if len(sub) >= 5:
-            r_s = spearmanr(sub["rating"], sub["bt_chrf"]); r_p = pearsonr(sub["rating"], sub["bt_chrf"])
-            corr_rows.append({"metric": "back-translation chrF (no reference)", "subset": name, "n": len(sub),
-                              "spearman": round(r_s[0], 3), "spearman_p": r_s[1], "pearson": round(r_p[0], 3)})
-    corr = pd.DataFrame(corr_rows)
-    corr.to_csv("results/rating_vs_chrf_correlation.csv", index=False)
-    display(corr)
-
-    fig, axes = plt.subplots(1, 2, figsize=(9, 3.5))
-    jit = np.random.default_rng(0).uniform(-0.12, 0.12, len(ev))
-    axes[0].scatter(fl["ref_chrf"], fl["rating"] + jit[:len(fl)], s=16, color="#2a6f97")
-    axes[0].set_xlabel("chrF vs reference"); axes[0].set_ylabel("LLM-judge rating (1-5)"); axes[0].set_title("FLORES rated", fontsize=10)
-    axes[1].scatter(ev["bt_chrf"], ev["rating"] + jit, s=16, c=np.where(ev["src_type"] == "flores", "#2a6f97", "#e07a5f"))
-    axes[1].set_xlabel("back-translation chrF"); axes[1].set_title("all rated (orange = own set)", fontsize=10)
-    for a in axes: a.spines[["top", "right"]].set_visible(False)
-    plt.tight_layout(); plt.savefig("results/rating_vs_chrf.png", dpi=150); plt.show()
+    h, l = ev["rating"].astype(int), ev["llm"].astype(int)
+    rho_hl = spearmanr(h, l)
+    agree = {"n": len(ev), "exact_agreement": int((h == l).sum()), "within_1_point": int(((h - l).abs() <= 1).sum()),
+             "human_rated_lower": int((h < l).sum()), "human_rated_higher": int((h > l).sum()),
+             "mean_human": round(h.mean(), 2), "mean_llm": round(l.mean(), 2),
+             "spearman": round(rho_hl[0], 3), "quadratic_weighted_kappa": round(cohen_kappa_score(h, l, weights="quadratic"), 3)}
+    for cut in (3, 2):
+        agree[f"kappa_bad_le_{cut}"] = round(cohen_kappa_score(h <= cut, l <= cut), 3)
+        agree[f"bad_le_{cut}_human"] = int((h <= cut).sum()); agree[f"bad_le_{cut}_llm"] = int((l <= cut).sum())
+        agree[f"bad_le_{cut}_both"] = int(((h <= cut) & (l <= cut)).sum())
+    pd.Series(agree).to_csv("results/human_vs_llm_agreement.csv", header=["value"])
+    cm = pd.crosstab(h, l, rownames=["human"], colnames=["llm"]).reindex(index=range(1, 6), columns=range(1, 6), fill_value=0)
+    cm.to_csv("results/human_vs_llm_confusion.csv")
+    print(json.dumps(agree, indent=1)); display(cm)
 """)
 
 code("""
@@ -316,12 +314,25 @@ def f1(df, tau, bad):
     fl_ = flag(df, tau); tp = (fl_ & bad).sum(); fp = (fl_ & ~bad).sum(); fn = (~fl_ & bad).sum()
     return 2 * tp / max(2 * tp + fp + fn, 1)
 
-if ratings_filled():
-    perm = np.random.default_rng(2026).permutation(len(ev))
-    calib, test = ev.iloc[perm[: len(ev) // 2]], ev.iloc[perm[len(ev) // 2:]]
+def run_eval(col, tag, who):
+    d = ev.copy(); d["r"] = d[col]
+    fl = d.dropna(subset=["ref_chrf"])
+    corr_rows = []
+    r_s = spearmanr(fl["r"], fl["ref_chrf"]); r_p = pearsonr(fl["r"], fl["ref_chrf"])
+    corr_rows.append({"metric": "chrF vs Kazakh reference", "subset": "FLORES rated", "n": len(fl),
+                      "spearman": round(r_s[0], 3), "spearman_p": r_s[1], "pearson": round(r_p[0], 3)})
+    for name, sub in [("all rated", d), ("own set", d[d["src_type"] != "flores"]), ("FLORES rated", fl)]:
+        r_s = spearmanr(sub["r"], sub["bt_chrf"]); r_p = pearsonr(sub["r"], sub["bt_chrf"])
+        corr_rows.append({"metric": "back-translation chrF (no reference)", "subset": name, "n": len(sub),
+                          "spearman": round(r_s[0], 3), "spearman_p": r_s[1], "pearson": round(r_p[0], 3)})
+    corr = pd.DataFrame(corr_rows); corr.to_csv(f"results/rating_vs_chrf_correlation{tag}.csv", index=False)
+    print(f"--- {who}: correlation"); display(corr)
+
+    perm = np.random.default_rng(2026).permutation(len(d))
+    calib, test = d.iloc[perm[: len(d) // 2]], d.iloc[perm[len(d) // 2:]]
     out_rows, thresholds = [], {}
     for cut in (3, 2):
-        bad_c, bad_t = calib["rating"] <= cut, test["rating"] <= cut
+        bad_c, bad_t = calib["r"] <= cut, test["r"] <= cut
         grid = sorted(set(np.round(calib["bt_chrf"], 1)) | {0.0, 101.0})
         best = max(grid, key=lambda t: (f1(calib, t, bad_c), -t))  # ties -> lower threshold (fewer alarms)
         thresholds[f"bad_if_rating_le_{cut}"] = float(best)
@@ -330,21 +341,34 @@ if ratings_filled():
                               (f"Senim: hard checks + back-translation < {best:.1f}", flag(test, best))]:
             out_rows.append({"bad_definition": f"rating <= {cut}", "split": "test", "system": system,
                              **scores(test, flags, bad_t)})
-    trust_eval = pd.DataFrame(out_rows)
-    trust_eval.to_csv("results/trust_check_eval.csv", index=False)
-    json.dump({"bt_chrf_threshold": thresholds["bad_if_rating_le_3"], "chosen_on": "calibration half of data/ratings.csv",
-               "bad_definition": "rating_1_5 <= 3", "all": thresholds, "n_calibration": len(calib), "n_test": len(test)},
-              open("results/threshold.json", "w"), indent=2)
-    print("thresholds chosen on calibration:", thresholds)
-    display(trust_eval)
+    trust_eval = pd.DataFrame(out_rows); trust_eval.to_csv(f"results/trust_check_eval{tag}.csv", index=False)
+    json.dump({"rater": who, "bt_chrf_threshold": thresholds["bad_if_rating_le_3"], "chosen_on": "calibration half of data/ratings.csv",
+               "bad_definition": "rating <= 3", "all": thresholds, "n_calibration": len(calib), "n_test": len(test)},
+              open(f"results/threshold{tag}.json", "w"), indent=2)
+    print(f"--- {who}: trust check on the test half; thresholds chosen on calibration:", thresholds); display(trust_eval)
+    return d, fl
+
+if ratings_filled():
+    ev_h, fl_h = run_eval("rating", "", "human (author)")
+    run_eval("llm", "_llm", "LLM judge (Claude)")
+
+    fig, axes = plt.subplots(1, 2, figsize=(9, 3.5))
+    jit = np.random.default_rng(0).uniform(-0.12, 0.12, len(ev_h))
+    axes[0].scatter(fl_h["ref_chrf"], fl_h["rating"] + jit[:len(fl_h)], s=16, color="#2a6f97")
+    axes[0].set_xlabel("chrF vs reference"); axes[0].set_ylabel("human rating (1-5)"); axes[0].set_title("FLORES rated", fontsize=10)
+    axes[1].scatter(ev_h["bt_chrf"], ev_h["rating"] + jit, s=16, c=np.where(ev_h["src_type"] == "flores", "#2a6f97", "#e07a5f"))
+    axes[1].set_xlabel("back-translation chrF"); axes[1].set_title("all rated (orange = own set)", fontsize=10)
+    for a in axes: a.spines[["top", "right"]].set_visible(False)
+    plt.tight_layout(); plt.savefig("results/rating_vs_chrf.png", dpi=150); plt.show()
 """)
 
 md("## 9. Text summary of all results")
 
 code("""
 import glob
-for f in ["results/chrf_by_language.csv", "results/worst5_kaz.csv", "results/rating_vs_chrf_correlation.csv",
-          "results/trust_check_eval.csv", "results/threshold.json"]:
+for f in ["results/chrf_by_language.csv", "results/worst5_kaz.csv", "results/human_vs_llm_agreement.csv", "results/human_vs_llm_confusion.csv",
+          "results/rating_vs_chrf_correlation.csv", "results/trust_check_eval.csv", "results/threshold.json",
+          "results/rating_vs_chrf_correlation_llm.csv", "results/trust_check_eval_llm.csv", "results/threshold_llm.json"]:
     if os.path.exists(f):
         print(f"===== {f}"); print(open(f, encoding="utf-8").read())
 print(f"Spearman(back-translation chrF, reference chrF), FLORES kaz n={len(flores)}: {rho:.3f} (p={p:.1e})")

@@ -1,4 +1,4 @@
-"""Writes the LLM-judge ratings into data/ratings.csv.
+"""[ARCHIVED - already applied] Wrote the LLM-judge ratings; they now live in the llm_* columns of data/ratings.csv. Do not re-run.
 
 Rater: Claude Opus 5.5 (Anthropic), acting as an LLM judge, reading the English source and the
 Kazakh translation side by side. NOT a human rating. Scale (fixed before rating):
