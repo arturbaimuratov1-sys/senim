@@ -9,7 +9,8 @@ English → Kazakh machine translation, plus a warning label that says when a tr
 - Notebook (runs on a free Colab T4 GPU): [`notebook.ipynb`](notebook.ipynb) · [open in Colab](https://colab.research.google.com/github/arturbaimuratov1-sys/senim/blob/main/notebook.ipynb)
 - Demo app: [`app.py`](app.py) (Gradio)
 - Trust-check code: [`senim.py`](senim.py) · tests: [`tests/test_hard_checks.py`](tests/test_hard_checks.py)
-- All result tables: [`results/`](results)
+- All result tables and charts: [`results/`](results). Full translations: [`results/flores_translations.csv`](results/flores_translations.csv), [`results/own_set_translations.csv`](results/own_set_translations.csv)
+- Ratings side by side (human and LLM judge), easy to read in Excel: [`results/ratings_view.xlsx`](results/ratings_view.xlsx)
 
 ---
 
@@ -61,6 +62,8 @@ All numbers come from the Colab run in `notebook.ipynb` (NLLB-200 distilled 600M
 | Kazakh | **52.1** | 1.4 |
 | Russian | **56.0** | 1.0 |
 | French | **69.2** | 25.5 |
+
+![chrF by language](results/chrf_by_language.png)
 
 Kazakh scores lowest of the three: the model is clearly weaker on Kazakh than on French. Translating is still far better than showing English (chrF 1.4), but 52 is not "safe to trust blindly".
 
@@ -125,7 +128,11 @@ The two raters order the translations very similarly, but **the human is stricte
 | back-translation chrF | our set | 50 | 0.35 | 0.012 |
 | back-translation chrF | FLORES rated | 40 | 0.51 | < 0.001 |
 
-Both are moderate signals, far from perfect, and back-translation is weakest on our own medicine and school sentences (0.35). On all 150 FLORES sentences, back-translation chrF and reference chrF agree only weakly: ρ = 0.30 (p = 0.0002).
+![Human rating vs chrF](results/rating_vs_chrf.png)
+
+Both are moderate signals, far from perfect, and back-translation is weakest on our own medicine and school sentences (0.35). In the right-hand plot, one of our sentences got a perfect back-translation score of 100 but a human rating of 2: the back-translation "repaired" the error, so the check could not see it. It is `own_19`: "consult a doctor" became "give advice to the doctor", and translating back gave exactly the original English. On all 150 FLORES sentences, back-translation chrF and reference chrF agree only weakly: ρ = 0.30 (p = 0.0002).
+
+![Back-translation chrF vs reference chrF](results/bt_vs_reference_chrf.png)
 
 ### 5. Does the trust check catch bad translations? (human labels, test half only, n = 45)
 

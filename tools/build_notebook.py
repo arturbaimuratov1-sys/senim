@@ -1,4 +1,4 @@
-"""Builds notebook.ipynb from the cell list below (keeps the notebook diff-friendly)."""
+"""Builds notebook.ipynb from the cell list below. NOTE: the committed notebook.ipynb holds the outputs of the Colab run; re-running this script replaces it with an empty (unexecuted) notebook."""
 import json
 from pathlib import Path
 
