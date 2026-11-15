@@ -60,3 +60,38 @@ def test_negation(src, tgt, should_flag):
 def test_kazakh_reasons():
     out = senim.kk_reasons(["time missing or changed: 6:00", "number not in the original: 5"])
     assert len(out) == 2
+
+
+# Regression tests for bugs found in the code review (v4.1)
+REVIEW_CASES = [
+    # times without minutes: Kazakh writes the hour only
+    ("The meeting is on Thursday, March 5, at 6 pm in room 214.",
+     "Жиналыс 5 наурыз, бейсенбі күні сағат 18-де 214 бөлмеде өтеді.", False),
+    ("Come at 6 pm.", "Сағат 19-да келіңіз.", True),
+    # thousands separators
+    ("Take 1,000 mg daily.", "Күніне 1000 мг ішіңіз.", False),
+    ("Take 1,000 mg daily.", "Күніне 1 000 мг ішіңіз.", False),
+    ("Take 1,000 mg daily.", "Күніне 100 мг ішіңіз.", True),
+    # compound number words
+    ("two thousand five hundred people", "2500 адам", False),
+    ("one hundred and five days", "105 күн", False),
+    # "march" the verb is not the month
+    ("The soldiers march to the city.", "Сарбаздар қалаға қарай жүреді.", False),
+]
+
+
+@pytest.mark.parametrize("src,tgt,should_flag", REVIEW_CASES)
+def test_review_fixes(src, tgt, should_flag):
+    assert bool(senim.hard_checks(src, tgt)) == should_flag, senim.hard_checks(src, tgt)
+
+
+def test_nouns_are_not_negations():
+    assert senim.check_negation("This is your room.", "Бұл сіздің бөлмеңіз.") == []
+    assert senim.check_negation("Your certificate will be checked.", "Анықтамаңыз тексеріледі.") == []
+    # a real negative imperative is still counted
+    assert senim.check_negation("Give the medicine.", "Дәріні бермеңіз.") != []
+
+
+def test_string_input_is_one_text():
+    assert senim._as_list("Hello there") == ["Hello there"]
+    assert senim._as_list(["a", "b"]) == ["a", "b"]

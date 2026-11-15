@@ -13,7 +13,9 @@ logistic model that combines all signals (trained in notebook.ipynb).
 """
 from __future__ import annotations
 
+import os
 import re
+import threading
 
 MODEL_NAME = "facebook/nllb-200-distilled-600M"
 DEFAULT_BT_THRESHOLD = 50.0  # used only until a calibrated value exists in results/threshold.json
@@ -26,6 +28,14 @@ BIG_MODEL_NAME = "facebook/nllb-200-distilled-1.3B"
 LABSE_NAME = "sentence-transformers/LaBSE"
 
 _models = {}  # name -> (model, tokenizer, device)
+# The shared tokenizer keeps src_lang as state: hold this lock from setting src_lang to the end of generate,
+# so two concurrent requests (e.g. Gradio with concurrency > 1) cannot mix their languages.
+_LOCK = threading.RLock()
+
+
+def _use_ct2() -> bool:
+    """SENIM_BACKEND=ct2 switches translate/translate_n to the CTranslate2 int8 backend (senim_fast.py)."""
+    return os.environ.get("SENIM_BACKEND", "").lower() == "ct2"
 
 
 def load_model(name: str = MODEL_NAME):
@@ -43,22 +53,25 @@ def load_model(name: str = MODEL_NAME):
 
 def translate(texts, src_lang: str, tgt_lang: str, batch_size: int = 16,
               num_beams: int = 4, max_new_tokens: int = 256, model_name: str = MODEL_NAME):
-    """Translate a list of strings with NLLB. Language codes are FLORES-200 codes, e.g. eng_Latn."""
+    """Translate a list of strings with NLLB. Language codes are FLORES-200 codes, e.g. eng_Latn.
+    max_new_tokens is passed to generate() as max_length (see the comment below)."""
+    if _use_ct2():
+        import senim_fast
+        return senim_fast.translate(texts, src_lang, tgt_lang, batch_size=batch_size, num_beams=num_beams,
+                                    max_new_tokens=max_new_tokens, model_name=model_name)
     import torch
 
     model, tok, device = load_model(model_name)
-    if isinstance(texts, str):
-        texts = [texts]
-    texts = [str(t) for t in texts]
+    texts = _as_list(texts)
     order = sorted(range(len(texts)), key=lambda i: len(texts[i]))  # length-sorted batches
     out = [None] * len(texts)
-    tok.src_lang = src_lang
     bos = tok.convert_tokens_to_ids(tgt_lang)
     for start in range(0, len(order), batch_size):
         idx = order[start:start + batch_size]
         batch = [texts[i] for i in idx]
-        enc = tok(batch, return_tensors="pt", padding=True, truncation=True, max_length=256).to(device)
-        with torch.no_grad():
+        with _LOCK, torch.inference_mode():
+            tok.src_lang = src_lang
+            enc = tok(batch, return_tensors="pt", padding=True, truncation=True, max_length=256).to(device)
             # max_length (not max_new_tokens) overrides the model's generation_config without a warning;
             # for an encoder-decoder it limits only the generated output.
             gen = model.generate(**enc, forced_bos_token_id=bos, num_beams=num_beams,
@@ -67,6 +80,13 @@ def translate(texts, src_lang: str, tgt_lang: str, batch_size: int = 16,
         for i, d in zip(idx, dec):
             out[i] = d
     return out
+
+
+def _as_list(texts):
+    """Accept one string or a list of strings."""
+    if isinstance(texts, str):
+        return [texts]
+    return [str(t) for t in texts]
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +117,8 @@ _KK_SUFFIXES = ("", "інші", "ыншы", "ншы", "нші", "ден", "да�
 # "он" (10) + a vowel/locative suffix collides with common words ("оны" = him, "онда" = there).
 _KK_SUFFIXES_ON = ("", "ыншы", "ға", "нан", "нің")
 
-_DIGIT_RE = re.compile(r"\d+(?:[.,]\d+)?")
+# "1,000" / "1 000" / "2 500" are one number (thousands separator); "3,50" or "3.5" is a decimal.
+_DIGIT_RE = re.compile(r"(?<![\d.,])\d{1,3}(?:[ ,\u00a0]\d{3})+(?![\d.,]\d)|\d+(?:[.,]\d+)?")
 # Clock times: "6:00 PM", "9:30 am", "18:00", "7.15". A dot only counts as a time separator
 # next to AM/PM (English) or when the source has times (Kazakh "7.15-де"); otherwise
 # "3.50 m" is a decimal number.
@@ -137,6 +158,9 @@ def _times(text: str, allow_ampm_without_minutes: bool, dot_times: bool = False)
 
 
 def _norm_num(s: str) -> float:
+    s = s.replace("\u00a0", "").replace(" ", "")
+    if re.fullmatch(r"\d{1,3}(?:,\d{3})+", s):  # thousands separator
+        return float(s.replace(",", ""))
     return float(s.replace(",", "."))
 
 
@@ -145,38 +169,44 @@ def _digit_numbers(text: str):
 
 
 def _parse_words(tokens, units, tens, mult):
-    """Turn a token stream into numbers by summing consecutive number words.
+    """Turn a token stream into numbers ("two thousand five hundred" -> 2500).
     A token ending with "|" closes the number (a Kazakh case suffix ends a compound:
     "бірден қырыққа" is 1 and 40, not 41)."""
-    nums, cur, active = [], 0, False
+    nums, total, cur, active = [], 0, 0, False
+
+    def flush():
+        nonlocal total, cur, active
+        if active:
+            nums.append(float(total + cur))
+        total, cur, active = 0, 0, False
+
     for t in tokens:
         closes = t.endswith("|")
         t = t.rstrip("|")
-        if closes and t in {**units, **tens, **mult}:
-            if t in mult:
-                cur = (cur or 1) * mult[t]
-            else:
-                cur += {**units, **tens}[t]
-            nums.append(float(cur))
-            cur, active = 0, False
-            continue
-        if t in units:
-            cur += units[t]; active = True
-        elif t in tens:
-            cur += tens[t]; active = True
+        if t in units or t in tens:
+            cur += units.get(t, 0) + tens.get(t, 0)
         elif t in mult:
-            cur = (cur or 1) * mult[t]; active = True
+            if mult[t] >= 1000:          # thousand closes a group: total += group * 1000
+                total += (cur or 1) * mult[t]
+                cur = 0
+            else:                         # hundred multiplies only the current group
+                cur = (cur or 1) * mult[t]
         else:
-            if active:
-                nums.append(float(cur))
-            cur, active = 0, False
-    if active:
-        nums.append(float(cur))
+            flush()
+            continue
+        active = True
+        if closes:
+            flush()
+    flush()
     return nums
 
 
 def _en_word_numbers(text: str):
     tokens = re.findall(r"[a-z]+", text.lower().replace("-", " "))
+    words = {**_EN_UNITS, **_EN_TENS, **_EN_MULT}
+    # "one hundred and five": "and" between number words is part of the number
+    tokens = [t for i, t in enumerate(tokens)
+              if not (t == "and" and 0 < i < len(tokens) - 1 and tokens[i - 1] in words and tokens[i + 1] in words)]
     return _parse_words(tokens, _EN_UNITS, _EN_TENS, _EN_MULT)
 
 
@@ -217,6 +247,17 @@ def check_numbers(src: str, tgt: str):
     src_time_set = set().union(*src_times) if src_times else set()
     bad_src = [f for f in src_times if not (f & tgt_time_set)]
     bad_tgt = [f for f in tgt_times if not (f & src_time_set)]
+    # "6 pm" has no minutes: Kazakh often writes just the hour ("сағат 18-де"), so a bare number equal to
+    # the hour (12- or 24-hour form) also counts, and that number is then not an "extra" number.
+    tgt_bare = set(_digit_numbers(tgt))
+    hour_hits, still_bad = set(), []
+    for f in bad_src:
+        hit = next((float(h) for h, m in sorted(f) if m == 0 and float(h) in tgt_bare), None)
+        if hit is None:
+            still_bad.append(f)
+        else:
+            hour_hits.add(hit)
+    bad_src = still_bad
     if bad_src:
         reasons.append("time missing or changed: " + ", ".join(
             "%d:%02d" % min(f) for f in bad_src))
@@ -228,7 +269,7 @@ def check_numbers(src: str, tgt: str):
     tgt_digits = _digit_numbers(tgt)
     tgt_all = tgt_digits + _kk_word_numbers(tgt)
     missing = sorted({n for n in src_nums if n not in tgt_all})
-    extra = sorted({n for n in tgt_digits if n not in src_nums})
+    extra = sorted({n for n in tgt_digits if n not in src_nums and n not in hour_hits})
     fmt = lambda xs: ", ".join(str(int(x)) if x.is_integer() else str(x) for x in xs)
     if missing:
         reasons.append(f"number missing or changed: {fmt(missing)}")
@@ -274,6 +315,9 @@ def check_dates(src: str, tgt: str):
         if en == "may":
             # Only the month: capitalised "May" next to a number ("May 5", "5 May").
             found = re.search(r"(\d\s*May\b|\bMay\s*\d)", src)
+        elif en == "march":
+            # "march" is also a verb: only the capitalised word counts as the month.
+            found = re.search(r"\bMarch\b", src)
         else:
             found = re.search(rf"\b{en}\b", src.lower())
         if found and not re.search(rf"\b{kk}", t):
@@ -301,16 +345,29 @@ _EN_NEG_RE = re.compile(
 # followed by a typical verb ending (imperative, conditional, participle, verbal noun, gerund).
 _KK_NEG_WORDS_RE = re.compile(r"(?<![а-яәғқңөұүһі])(емес|жоқ|ешқашан|ешбір|ештеңе|ешкім|ешқандай|ешқайда)")
 _KK_NEG_VERB_RE = re.compile(
-    r"[а-яәғқңөұүһі]{2,}(ма|ме|ба|бе|па|пе)"
+    r"(?<![а-яәғқңөұүһі])([а-яәғқңөұүһі]{2,}(?:ма|ме|ба|бе|па|пе))"
     r"(ңыз|ңіз|ңдар|ңдер|са|се|саңыз|сеңіз|сақ|сек|ған|ген|қан|кен|ды|ді|йды|йді|йтын|йтін|у|уы|уі|уға|уге|"
     r"ймын|ймін|йсыз|йсіз|йміз|ймыз|стан|стен|й|йынша|йінше|ғандықтан|гендіктен)"
     r"(?![а-яәғқңөұүһі])")
 
 
+# Nouns whose stem already ends in -ма/-ме/-ба/-бе/-па/-пе: "бөлмеңіз" = "your room", not a negative verb.
+_KK_NOUN_STEMS = ("бөлме", "анықтама", "бағдарлама", "хабарлама", "кеме", "түйме", "қаптама", "нұсқама",
+                  "тізбе", "арба")  # only unambiguous nouns; e.g. "тапсырмаңыз" can also mean "do not hand in"
+
+
+def _kk_negative_verbs(t: str) -> int:
+    n = 0
+    for m in _KK_NEG_VERB_RE.finditer(t):
+        if not m.group(1).endswith(_KK_NOUN_STEMS):
+            n += 1
+    return n
+
+
 def negation_counts(src: str, tgt: str):
     en = len(_EN_NEG_RE.findall(src))
     t = tgt.lower()
-    kk = len(_KK_NEG_WORDS_RE.findall(t)) + len(_KK_NEG_VERB_RE.findall(t))
+    kk = len(_KK_NEG_WORDS_RE.findall(t)) + _kk_negative_verbs(t)
     return en, kk
 
 
@@ -351,7 +408,6 @@ KK_REASON = {
     "date": "Күн немесе ай атауы өзгерді.",
     "back-translation": "Кері аударма түпнұсқаның мағынасынан алыс.",
     "negation": "«Емес / жоқ / -ма, -ме» түпнұсқадағыдай емес: мағынасы керісінше болуы мүмкін.",
-    "risk": "Бірнеше белгі бойынша бұл аударма қате болуы ықтимал.",
 }
 
 
@@ -424,21 +480,26 @@ def v2_risk(features: dict, model: dict) -> float:
 def translate_n(texts, src_lang: str, tgt_lang: str, n: int = 4, num_beams: int = 4,
                 model_name: str = MODEL_NAME, batch_size: int = 8, max_new_tokens: int = 256):
     """Return the n best beam-search translations for every text (list of lists).
-    The first candidate equals translate(...) with the same num_beams."""
+    The first candidate is the same beam search as translate(...); it can differ in rare cases because
+    batches are padded differently in fp16."""
+    if _use_ct2():
+        import senim_fast
+        return senim_fast.translate_n(texts, src_lang, tgt_lang, n=n, num_beams=num_beams, model_name=model_name,
+                                      batch_size=batch_size, max_new_tokens=max_new_tokens)
     import torch
 
     model, tok, device = load_model(model_name)
-    texts = [str(t) for t in texts]
+    texts = _as_list(texts)
     order = sorted(range(len(texts)), key=lambda i: len(texts[i]))
     out = [None] * len(texts)
-    tok.src_lang = src_lang
     bos = tok.convert_tokens_to_ids(tgt_lang)
     beams = max(num_beams, n)
     for start in range(0, len(order), batch_size):
         idx = order[start:start + batch_size]
-        enc = tok([texts[i] for i in idx], return_tensors="pt", padding=True, truncation=True,
-                  max_length=256).to(device)
-        with torch.no_grad():
+        with _LOCK, torch.inference_mode():
+            tok.src_lang = src_lang
+            enc = tok([texts[i] for i in idx], return_tensors="pt", padding=True, truncation=True,
+                      max_length=256).to(device)
             gen = model.generate(**enc, forced_bos_token_id=bos, num_beams=beams,
                                  num_return_sequences=n, max_length=max_new_tokens)
         dec = tok.batch_decode(gen, skip_special_tokens=True)
@@ -468,7 +529,7 @@ def split_sentences(text: str):
 
 def translate_split(texts, src_lang: str, tgt_lang: str, **kw):
     """Translate every sentence separately and join them again."""
-    texts = [str(t) for t in texts]
+    texts = _as_list(texts)
     pieces = [split_sentences(t) or [t] for t in texts]
     flat = [p for ps in pieces for p in ps]
     tr = translate(flat, src_lang, tgt_lang, **kw)
@@ -504,8 +565,50 @@ def select_best(srcs, candidates, back=None):
 def improved_translate(texts, src_lang: str = "eng_Latn", tgt_lang: str = "kaz_Cyrl"):
     """System R (v3): the best of 8 candidates (4 from NLLB 600M + 4 from NLLB 1.3B), picked by select_best.
     On FLORES+ dev it scored +2.15 chrF over the plain 600M output; see experiments/P3_PLAN.md and REPORT.md."""
-    texts = [str(t) for t in texts]
+    texts = _as_list(texts)
     c600 = translate_n(texts, src_lang, tgt_lang, n=4, num_beams=4)
     c13 = translate_n(texts, src_lang, tgt_lang, n=4, num_beams=4, model_name=BIG_MODEL_NAME)
     chosen, _, _ = select_best(texts, [a + b for a, b in zip(c600, c13)])
     return chosen
+
+
+# ---------------------------------------------------------------------------
+# v4: smart cascade — fast for safe sentences, best-of-8 only for risky ones
+# ---------------------------------------------------------------------------
+
+def back_translate_cached(texts, back=None, model_name: str = MODEL_NAME):
+    """Back-translate Kazakh -> English, reusing (and filling) the dict `back`. Duplicates are translated once."""
+    back = {} if back is None else back
+    todo = sorted({t for t in texts if t not in back})
+    if todo:
+        for k, b in zip(todo, translate(todo, "kaz_Cyrl", "eng_Latn", model_name=model_name)):
+            back[k] = b
+    return back
+
+
+def is_safe(src: str, tgt: str, back_en: str, threshold: float) -> bool:
+    """The trust check of the app, as a yes/no: no number/date/negation problem and back-translation close enough."""
+    return not hard_checks(src, tgt) and not check_negation(src, tgt) and sentence_chrf(back_en, src) >= threshold
+
+
+def smart_translate(texts, threshold: float = DEFAULT_BT_THRESHOLD, src_lang: str = "eng_Latn",
+                    tgt_lang: str = "kaz_Cyrl"):
+    """Cascade (v4).
+    Stage 1, every sentence: NLLB 600M (beam 4; the 4 beams come for free) + back-translation of the top beam.
+            If it passes the trust check, keep it.
+    Stage 2, only risky sentences: add the 4 best beams of NLLB 1.3B and pick the best of 8 with select_best
+            (exactly system R of v3), reusing stage 1's candidates and back-translations.
+    Returns (translations, stages, back) where stages[i] is "fast" or "best_of_8"."""
+    texts = _as_list(texts)
+    c600 = translate_n(texts, src_lang, tgt_lang, n=4, num_beams=4)
+    top = [c[0] for c in c600]
+    back = back_translate_cached(top)
+    out, stages = list(top), ["fast"] * len(texts)
+    risky = [i for i, (s, t) in enumerate(zip(texts, top)) if not is_safe(s, t, back[t], threshold)]
+    if risky:
+        c13 = translate_n([texts[i] for i in risky], src_lang, tgt_lang, n=4, num_beams=4, model_name=BIG_MODEL_NAME)
+        cands = [c600[i] + c for i, c in zip(risky, c13)]
+        chosen, _, back = select_best([texts[i] for i in risky], cands, back)
+        for i, c in zip(risky, chosen):
+            out[i], stages[i] = c, "best_of_8"
+    return out, stages, back

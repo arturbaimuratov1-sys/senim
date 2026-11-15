@@ -31,8 +31,12 @@ def run(text: str):
     text = (text or "").strip()
     if not text:
         return "", "", "", ""
-    kk = senim.translate([text], "eng_Latn", "kaz_Cyrl")[0]
-    back = senim.translate([kk], "kaz_Cyrl", "eng_Latn")[0]
+    # One beam search gives both the translation (top beam) and 3 spare candidates for the best-of-8 step,
+    # so nothing is translated twice; the back-translation is cached and reused there as well.
+    c600 = senim.translate_n([text], "eng_Latn", "kaz_Cyrl", n=4, num_beams=4)[0]
+    kk = c600[0]
+    back_cache = senim.back_translate_cached([kk])
+    back = back_cache[kk]
     v = senim.verdict(text, kk, back, THRESHOLD, negation=True)
     second = ""
     if v["trust"]:
@@ -50,7 +54,12 @@ def run(text: str):
         # picked to pass the number/date/negation checks and to back-translate best. Not re-checked here,
         # because the trust threshold was calibrated on the plain 600M output.
         if ENABLE_SECOND:
-            second = senim.improved_translate([text])[0]
+            c13 = senim.translate_n([text], "eng_Latn", "kaz_Cyrl", n=4, num_beams=4,
+                                    model_name=senim.BIG_MODEL_NAME)[0]
+            second = senim.select_best([text], [c600 + c13], back_cache)[0][0]
+            if senim.hard_checks(text, second) or senim.check_negation(text, second):
+                second += ("\n\n⚠️ Бұл нұсқа да тексеруден өтпеді / this version also fails the checks "
+                           "(numbers, dates or negation). Ask a person who reads English.")
     details = f"Back-translation chrF: {v['bt_chrf']:.1f} (threshold {THRESHOLD:.1f}, {THRESHOLD_NOTE})"
     return kk, label, second, f"{back}\n\n{details}"
 
