@@ -37,7 +37,7 @@ Everything this project uses, with links. Licences are those stated by each sour
 - scikit-learn (logistic regression, cross-validation, AUC, Cohen's kappa) — https://scikit-learn.org
 - pandas, NumPy, SciPy, Matplotlib — https://pandas.pydata.org, https://numpy.org, https://scipy.org, https://matplotlib.org
 - Google Colab (free T4 GPU) — https://colab.research.google.com
-- Kaggle Notebooks (free T4 GPU; used for the v3 experiment) — https://www.kaggle.com/code
+- Kaggle Notebooks (free T4 GPU; used for the v3 and v4 experiments) — https://www.kaggle.com/code
 - GitHub and GitHub CLI — https://github.com, https://cli.github.com
 
 ## AI tools
@@ -48,4 +48,5 @@ Everything this project uses, with links. Licences are those stated by each sour
   run the v3/v4 experiments on Kaggle, and draft README/REPORT/SOURCES.
   Two Claude Code subagents helped in v4: one reviewed the code for bugs, one wrote `senim_fast.py` (CTranslate2 backend) and its tests;
   their work was checked by running it.
-  All numbers come from the Colab and Kaggle runs (copied with MD5 checks), not from the AI.
+  All numbers come from the Colab and Kaggle runs, not from the AI. Result tables were copied with MD5 checks,
+  except `results/v4_speed_backend.csv`, which was copied by hand from the printed benchmark log.
