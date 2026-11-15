@@ -6,7 +6,7 @@
 
 **Main takeaway:** a free translator got **44 of 90** Kazakh translations partly or fully wrong (rated by a Kazakh speaker), and the errors read fluently. Senim warns about **6 of 8 serious errors** (baseline "always trust": 0), and choosing the best of 8 candidate translations improves the translation itself by **+2.6 chrF** on held-out test data.
 
-[Notebook with outputs](notebook.ipynb) · [Full report](REPORT.md) · [Sources](SOURCES.md) · [Demo app](app.py)
+[**Demo video (1:43)**](demo/senim_demo.mp4) · [Notebook with outputs](notebook.ipynb) · [Full report](REPORT.md) · [Sources](SOURCES.md) · [Demo app](app.py)
 
 **Run it:** open the [notebook in Colab](https://colab.research.google.com/github/arturbaimuratov1-sys/senim/blob/main/notebook.ipynb) (T4 GPU, add your Hugging Face token as the secret `HF_TOKEN`, then Run all), or `pip install -r requirements.txt && python app.py` for the demo.
 
