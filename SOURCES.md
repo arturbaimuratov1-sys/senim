@@ -44,4 +44,5 @@ Everything this project uses, with links. Licences are those stated by each sour
 - **Claude Code** (Anthropic), model Claude Opus 5.5 — https://claude.com/claude-code
   Used to: write the code (`senim.py`, `app.py`, notebook builder, tests), run the notebook in Google Colab through a browser,
   suggest topics for the own test set, give the 1–5 ratings in `data/ratings.csv` as an LLM judge,
-  and draft this README/SOURCES. All numbers in the README come from the Colab run, not from the AI.
+  run the v3 experiment on Kaggle, and draft README/REPORT/SOURCES.
+  All numbers come from the Colab and Kaggle runs (copied with MD5 checks), not from the AI.
