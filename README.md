@@ -52,6 +52,11 @@ The app also runs a negation check: with it, 7 of 8 serious errors are caught, a
 | …your child **may miss** the trip | "may **not** miss the trip" | сапарға бара алмауы мүмкін |
 | …for **Friday's** outdoor activity | "on **Sunday**" (жексенбі) | жұмадағы |
 
+**Faster and checked (v4, [REPORT §8](REPORT.md)):**
+- An AI code review found 5 bugs in the checks (e.g. "6 pm" vs "сағат 18-де"). All are fixed with tests, and none changes any reported result.
+- A CTranslate2 backend is 3.2× faster on CPU at the same chrF. It rewords 2 in 3 outputs, which can shift the calibrated warning, so it is opt-in.
+- Running best-of-8 only for risky sentences saved 30% of the time but missed our pre-set bar.
+
 **Where it fails:**
 - Medicine sentences fail more often than school ones (13 of 25 vs 8 of 25 bad).
 - Back-translation sometimes "repairs" an error, so the check misses it: "consult a doctor" → "give advice to the doctor" back-translated perfectly.

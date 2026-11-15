@@ -32,6 +32,7 @@ Everything this project uses, with links. Licences are those stated by each sour
 - Hugging Face Transformers — https://github.com/huggingface/transformers
 - Hugging Face Datasets — https://github.com/huggingface/datasets
 - Gradio (demo app) — https://www.gradio.app
+- CTranslate2 (optional fast inference backend, v4) — https://github.com/OpenNMT/CTranslate2
 - sentence-transformers — https://www.sbert.net
 - scikit-learn (logistic regression, cross-validation, AUC, Cohen's kappa) — https://scikit-learn.org
 - pandas, NumPy, SciPy, Matplotlib — https://pandas.pydata.org, https://numpy.org, https://scipy.org, https://matplotlib.org
@@ -44,5 +45,7 @@ Everything this project uses, with links. Licences are those stated by each sour
 - **Claude Code** (Anthropic), model Claude Opus 5.5 — https://claude.com/claude-code
   Used to: write the code (`senim.py`, `app.py`, notebook builder, tests), run the notebook in Google Colab through a browser,
   suggest topics for the own test set, give the 1–5 ratings in `data/ratings.csv` as an LLM judge,
-  run the v3 experiment on Kaggle, and draft README/REPORT/SOURCES.
+  run the v3/v4 experiments on Kaggle, and draft README/REPORT/SOURCES.
+  Two Claude Code subagents helped in v4: one reviewed the code for bugs, one wrote `senim_fast.py` (CTranslate2 backend) and its tests;
+  their work was checked by running it.
   All numbers come from the Colab and Kaggle runs (copied with MD5 checks), not from the AI.

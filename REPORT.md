@@ -264,6 +264,44 @@ A reproduces the notebook's 52.1 exactly, so the two setups agree.
 - **R's output was not rated by a human.** The trust threshold was calibrated on A's output, so the app keeps A as the checked translation and shows R as an "improved translation" only when it warns, and only on a GPU.
 - Small run-to-run differences exist: A's score against the corrections was 57.45 in one run and 57.54 in another. Batching changes the padding, which changes a few beam-search outputs.
 
+### 8. Senim v4: faster, and a code review
+
+We asked two AI coding agents (Claude Code subagents) for help: one reviewed the code for bugs, the other wrote a faster translation backend. Both results were checked by running them, not taken on trust.
+
+**Code review: bugs found and fixed (v4.1).** The reviewer found real bugs in the rule-based checks:
+- "at 6 pm" was flagged even when correctly translated as "сағат 18-де". One of the demo's own examples was affected.
+- "1,000 mg" was read as 1, and "1 000" as two numbers.
+- "two thousand five hundred" was parsed as 200,500.
+- Kazakh nouns such as "бөлмеңіз" ("your room") were counted as negations.
+- "march" the verb was treated as the month.
+
+All are fixed, with regression tests: `tests/` has 51 passing tests. **None of the fixes changes a single flag** on the 90 rated, 150 FLORES or 50 own translations. So every earlier result in this report stands unchanged. The app also stopped doing work twice: it reuses the beam-search candidates and the back-translation from the first step in the best-of-8 step.
+
+**Cascade (pre-registered: [`experiments/P4_PLAN.md`](experiments/P4_PLAN.md); [`results/v4_dev_summary.csv`](results/v4_dev_summary.csv)).** Idea: run the expensive best-of-8 only for sentences that fail the trust check. FLORES+ dev, n = 997:
+
+| System | chrF | Gain over A (95% CI) | Seconds / sentence (T4) | Share sent to best-of-8 |
+|---|---|---|---|---|
+| A | 50.39 | — | 0.154 | — |
+| R (best of 8 for all) | 52.72 | +2.11 (1.60 to 2.58) | 0.767 | 100% |
+| C (cascade) | 52.43 | +1.89 (1.42 to 2.31) | 0.537 | 70% |
+
+C keeps about 90% of the gain at 70% of R's time. The pre-registered rule demanded at most 60%, so **C was not adopted**. The reason: 70% of FLORES news sentences fail the trust check (threshold 63), so most of them go to the expensive step anyway. *Deviation from the plan:* a separate CPU benchmark ran on the same machine during the R run, which inflated R's time (561 s in the v3 run, 765 s here). With a clean timing C's share of R's time would be even higher, so the conclusion does not change.
+
+**Faster backend: CTranslate2** ([`senim_fast.py`](senim_fast.py), written by the agent; [`results/v4_speed_backend.csv`](results/v4_speed_backend.csv)). Same NLLB 600M model, converted to the CTranslate2 inference engine:
+
+| Device | Precision | Speed-up vs transformers | chrF (transformers → CT2) | Identical outputs |
+|---|---|---|---|---|
+| T4 GPU (n = 300) | int8 + float16 | 1.85× | 50.31 → 49.70 | 38% |
+| CPU, 4 cores (n = 50) | int8 | 3.24× | 49.04 → 49.06 | 32% |
+| CPU, 4 cores (n = 50) | float32 | 1.72× | 49.04 → 48.02 | 90% |
+
+On CPU, int8 is 3× faster at the same chrF, which would make a free CPU server usable. But it rewords about 2 in 3 translations, and the trust threshold was calibrated on the transformers output. In an end-to-end test of the app on CPU, the int8 backend turned one correct demo translation ("Take one 500 mg tablet…": "алыңыз" instead of "қабылдаңыз") into a false warning. So the app keeps transformers by default, and CTranslate2 is opt-in (`SENIM_BACKEND=ct2`). The CPU timings come from a shared Kaggle machine and are noisy: the same transformers run took 200 s once and 139 s another time.
+
+**End-to-end check of the app** (Kaggle T4, transformers, `app.run`):
+- "Take one 500 mg tablet…" → ✅.
+- "…if you notice unusual bleeding" → ⚠️. The improved best-of-8 translation reads "әдеттегіден тыс қан кетуді байқасаңыз", which is the correct "unusual bleeding" that the plain translation got wrong.
+- "…Thursday, March 5, at 6 pm in room 214" → ✅, after the 6 pm fix.
+
 ## What we'd do next
 
 1. **More human raters**: 2–3 more fluent Kazakh speakers rate the same 90 translations (blank sheet: `data/ratings_human.xlsx`), so we can measure agreement between people, not just between one person and an LLM.

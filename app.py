@@ -26,15 +26,14 @@ import torch  # noqa: E402
 
 ENABLE_SECOND = torch.cuda.is_available() or os.environ.get("SENIM_SECOND") == "1"
 
-# Without a GPU, use the CTranslate2 int8 backend if it is installed: on CPU it was 3.2x faster with the same
-# chrF (results/v4_speed_backend.csv). On a GPU keep the transformers model (int8 there cost 0.6 chrF).
-if not torch.cuda.is_available() and "SENIM_BACKEND" not in os.environ:
-    try:
-        import ctranslate2  # noqa: F401
-        os.environ["SENIM_BACKEND"] = "ct2"
-    except ImportError:
-        pass
-BACKEND = "CTranslate2 int8" if os.environ.get("SENIM_BACKEND", "").lower() == "ct2" else "transformers"
+# Backend: transformers by default, because the trust threshold was calibrated on its output.
+# SENIM_BACKEND=ct2 switches to CTranslate2 (senim_fast.py): 3.2x faster on CPU in int8, but it changes the wording
+# of about 2 in 3 translations, and in our test that turned one correct demo translation into a false warning.
+# See REPORT.md, section 8, and results/v4_speed_backend.csv.
+if os.environ.get("SENIM_BACKEND", "").lower() == "ct2":
+    BACKEND = "CTranslate2 " + (os.environ.get("SENIM_CT2_COMPUTE") or ("int8_float16" if torch.cuda.is_available() else "int8"))
+else:
+    BACKEND = "transformers"
 
 
 def run(text: str):
