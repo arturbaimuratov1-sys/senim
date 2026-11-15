@@ -509,3 +509,45 @@ def improved_translate(texts, src_lang: str = "eng_Latn", tgt_lang: str = "kaz_C
     c13 = translate_n(texts, src_lang, tgt_lang, n=4, num_beams=4, model_name=BIG_MODEL_NAME)
     chosen, _, _ = select_best(texts, [a + b for a, b in zip(c600, c13)])
     return chosen
+
+
+# ---------------------------------------------------------------------------
+# v4: smart cascade — fast for safe sentences, best-of-8 only for risky ones
+# ---------------------------------------------------------------------------
+
+def back_translate_cached(texts, back=None, model_name: str = MODEL_NAME):
+    """Back-translate Kazakh -> English, reusing (and filling) the dict `back`. Duplicates are translated once."""
+    back = {} if back is None else back
+    todo = sorted({t for t in texts if t not in back})
+    if todo:
+        for k, b in zip(todo, translate(todo, "kaz_Cyrl", "eng_Latn", model_name=model_name)):
+            back[k] = b
+    return back
+
+
+def is_safe(src: str, tgt: str, back_en: str, threshold: float) -> bool:
+    """The trust check of the app, as a yes/no: no number/date/negation problem and back-translation close enough."""
+    return not hard_checks(src, tgt) and not check_negation(src, tgt) and sentence_chrf(back_en, src) >= threshold
+
+
+def smart_translate(texts, threshold: float = DEFAULT_BT_THRESHOLD, src_lang: str = "eng_Latn",
+                    tgt_lang: str = "kaz_Cyrl"):
+    """Cascade (v4).
+    Stage 1, every sentence: NLLB 600M (beam 4; the 4 beams come for free) + back-translation of the top beam.
+            If it passes the trust check, keep it.
+    Stage 2, only risky sentences: add the 4 best beams of NLLB 1.3B and pick the best of 8 with select_best
+            (exactly system R of v3), reusing stage 1's candidates and back-translations.
+    Returns (translations, stages, back) where stages[i] is "fast" or "best_of_8"."""
+    texts = [str(t) for t in texts]
+    c600 = translate_n(texts, src_lang, tgt_lang, n=4, num_beams=4)
+    top = [c[0] for c in c600]
+    back = back_translate_cached(top)
+    out, stages = list(top), ["fast"] * len(texts)
+    risky = [i for i, (s, t) in enumerate(zip(texts, top)) if not is_safe(s, t, back[t], threshold)]
+    if risky:
+        c13 = translate_n([texts[i] for i in risky], src_lang, tgt_lang, n=4, num_beams=4, model_name=BIG_MODEL_NAME)
+        cands = [c600[i] + c for i, c in zip(risky, c13)]
+        chosen, _, back = select_best([texts[i] for i in risky], cands, back)
+        for i, c in zip(risky, chosen):
+            out[i], stages[i] = c, "best_of_8"
+    return out, stages, back
