@@ -13,10 +13,18 @@ import senim
 
 THRESHOLD = senim.DEFAULT_BT_THRESHOLD
 THRESHOLD_NOTE = "default value (not calibrated yet)"
-if os.path.exists("results/threshold.json"):
-    with open("results/threshold.json", encoding="utf-8") as f:
-        THRESHOLD = float(json.load(f)["bt_chrf_threshold"])
-    THRESHOLD_NOTE = "calibrated on human ratings (results/threshold.json)"
+for _path in ("results/threshold.json", "threshold.json"):  # the second one is used on Hugging Face Spaces
+    if os.path.exists(_path):
+        with open(_path, encoding="utf-8") as f:
+            THRESHOLD = float(json.load(f)["bt_chrf_threshold"])
+        THRESHOLD_NOTE = f"calibrated on human ratings ({_path})"
+        break
+
+# The second translation (NLLB 1.3B) needs a GPU to be usable: it is shown only when a GPU is present,
+# or when SENIM_SECOND=1 is set. On a free CPU server it is switched off.
+import torch  # noqa: E402
+
+ENABLE_SECOND = torch.cuda.is_available() or os.environ.get("SENIM_SECOND") == "1"
 
 
 def run(text: str):
@@ -39,7 +47,8 @@ def run(text: str):
                  "Do not rely on this translation. Ask a person who reads English.\n\n"
                  f"{kk_lines}\n\n**Why (details):**\n{en_lines}")
         # Second opinion from the bigger model: more accurate on FLORES+, but not checked by Senim.
-        second = senim.translate([text], "eng_Latn", "kaz_Cyrl", model_name=senim.BIG_MODEL_NAME)[0]
+        if ENABLE_SECOND:
+            second = senim.translate([text], "eng_Latn", "kaz_Cyrl", model_name=senim.BIG_MODEL_NAME)[0]
     details = f"Back-translation chrF: {v['bt_chrf']:.1f} (threshold {THRESHOLD:.1f}, {THRESHOLD_NOTE})"
     return kk, label, second, f"{back}\n\n{details}"
 
@@ -64,7 +73,7 @@ with gr.Blocks(title="Senim") as demo:
             out = gr.Textbox(label="Kazakh / Қазақша", lines=6)
             trust = gr.Markdown()
             second = gr.Textbox(label="Second translation by a bigger model (only with a warning; not checked) / "
-                                      "Екінші нұсқа (үлкен модель, тексерілмеген)", lines=4)
+                                      "Екінші нұсқа (үлкен модель, тексерілмеген)", lines=4, visible=ENABLE_SECOND)
             back = gr.Textbox(label="Back-translation to English (for checking)", lines=4)
     btn.click(run, inputs=src, outputs=[out, trust, second, back])
 

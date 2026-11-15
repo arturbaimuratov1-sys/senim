@@ -1,0 +1,12 @@
+{
+  "rater": "human (author)",
+  "bt_chrf_threshold": 63.0,
+  "chosen_on": "calibration half of data/ratings.csv",
+  "bad_definition": "rating <= 3",
+  "all": {
+    "bad_if_rating_le_3": 63.0,
+    "bad_if_rating_le_2": 47.0
+  },
+  "n_calibration": 45,
+  "n_test": 45
+}
