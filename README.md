@@ -8,6 +8,8 @@
 
 [Notebook with outputs](notebook.ipynb) · [Full report](REPORT.md) · [Sources](SOURCES.md) · [Demo app](app.py)
 
+**Run it:** open the [notebook in Colab](https://colab.research.google.com/github/arturbaimuratov1-sys/senim/blob/main/notebook.ipynb) (T4 GPU, add your Hugging Face token as the secret `HF_TOKEN`, then Run all), or `pip install -r requirements.txt && python app.py` for the demo.
+
 ## The problem
 A grandmother in Kazakhstan gets a medicine leaflet in English; a parent gets a letter from school. They paste it into a free translator and get fluent Kazakh, with no way to see that a sentence now says the opposite.
 
