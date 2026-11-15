@@ -63,8 +63,13 @@ The app also runs a negation check: with it, 7 of 8 serious errors are caught, a
 - Best-of-8 is 4× slower, and it was not re-rated by a human.
 - One human rater; 45 sentences in the held-out half.
 
+## What real people said (informal feedback, not a study)
+Reported by the author, who asked two people:
+- **A pharmacist who also reads English** reviewed the project and gave a positive recommendation. In the pharmacist's opinion the AI translated correctly in about 9 of 10 cases. This is a general impression, not a sentence-by-sentence rating, and it is more optimistic than our own rating (44 of 90 translations judged wrong by the author, who counted any change of meaning; 13 of 25 medicine sentences). We do not know which translations the pharmacist looked at.
+- **An elderly woman who reads neither English nor French** confirmed that the problem is real. She said she does not fully trust general chatbots such as ChatGPT for medicine, because they are not specialised in pharmacy or translation. A warning label that says when not to trust a translation answers exactly this doubt.
+
 ## What we'd do next
-1. More Kazakh-speaking raters, to measure agreement between people.
+1. Ask the pharmacist and more Kazakh speakers to rate the same 90 translations sentence by sentence, to measure agreement between people.
 2. Re-rate the best-of-8 output and calibrate the warning on it.
 
 ## Sources
