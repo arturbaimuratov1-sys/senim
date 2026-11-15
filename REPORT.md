@@ -285,7 +285,7 @@ All are fixed, with regression tests: `tests/` has 51 passing tests. **None of t
 | R (best of 8 for all) | 52.72 | +2.11 (1.60 to 2.58) | 0.767 | 100% |
 | C (cascade) | 52.43 | +1.89 (1.42 to 2.31) | 0.537 | 70% |
 
-C keeps about 90% of the gain at 70% of R's time. The pre-registered rule demanded at most 60%, so **C was not adopted**. The reason: 70% of FLORES news sentences fail the trust check (threshold 63), so most of them go to the expensive step anyway. *Deviation from the plan:* a separate CPU benchmark ran on the same machine during the R run, which inflated R's time (561 s in the v3 run, 765 s here). With a clean timing C's share of R's time would be even higher, so the conclusion does not change.
+C keeps about 90% of the gain at 70% of R's time. The pre-registered rule demanded at most 60%, so **C was not adopted**. The reason: 70% of FLORES news sentences fail the trust check (threshold 63), so most of them go to the expensive step anyway. *Timing caveat:* a separate GPU and CPU speed benchmark ran on the same Kaggle machine at the same time, so all times in this table are noisy (R took 561 s in the v3 run and 765 s here). The 70% is from a single run.
 
 **Faster backend: CTranslate2** ([`senim_fast.py`](senim_fast.py), written by the agent; [`results/v4_speed_backend.csv`](results/v4_speed_backend.csv)). Same NLLB 600M model, converted to the CTranslate2 inference engine:
 
@@ -295,11 +295,11 @@ C keeps about 90% of the gain at 70% of R's time. The pre-registered rule demand
 | CPU, 4 cores (n = 50) | int8 | 3.24× | 49.04 → 49.06 | 32% |
 | CPU, 4 cores (n = 50) | float32 | 1.72× | 49.04 → 48.02 | 90% |
 
-On CPU, int8 is 3× faster at the same chrF, which would make a free CPU server usable. But it rewords about 2 in 3 translations, and the trust threshold was calibrated on the transformers output. In an end-to-end test of the app on CPU, the int8 backend turned one correct demo translation ("Take one 500 mg tablet…": "алыңыз" instead of "қабылдаңыз") into a false warning. So the app keeps transformers by default, and CTranslate2 is opt-in (`SENIM_BACKEND=ct2`). The CPU timings come from a shared Kaggle machine and are noisy: the same transformers run took 200 s once and 139 s another time.
+On CPU, int8 is 3× faster at the same chrF, which would make a free CPU server usable. But it rewords about 2 in 3 translations, and the trust threshold was calibrated on the transformers output. In an end-to-end test of the app on CPU, the int8 backend turned one demo translation ("Take one 500 mg tablet…") that was ✅ with transformers into a ⚠️. We did not record which check fired. So the app keeps transformers by default, and CTranslate2 is opt-in (`SENIM_BACKEND=ct2`). The CPU timings come from a shared Kaggle machine and are noisy: the same transformers run took 200 s once and 139 s another time.
 
 **End-to-end check of the app** (Kaggle T4, transformers, `app.run`):
 - "Take one 500 mg tablet…" → ✅.
-- "…if you notice unusual bleeding" → ⚠️. The improved best-of-8 translation reads "әдеттегіден тыс қан кетуді байқасаңыз", which is the correct "unusual bleeding" that the plain translation got wrong.
+- "…if you notice unusual bleeding" → ⚠️, correctly warned. **The improved best-of-8 translation did not fix this sentence**: it still says "әдеттегідей қан кетуді байқасаңыз" ("usual bleeding"; the correct form is "әдеттен тыс"). Our checks do not flag it either (no number, date or negation problem), so best-of-8 can still pick a wrong-meaning translation. This shows the limit of the approach.
 - "…Thursday, March 5, at 6 pm in room 214" → ✅, after the 6 pm fix.
 
 ## What we'd do next
