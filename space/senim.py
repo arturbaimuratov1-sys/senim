@@ -412,3 +412,100 @@ def v2_risk(features: dict, model: dict) -> float:
     for name, coef, mu, sd in zip(model["features"], model["coef"], model["mean"], model["std"]):
         z += coef * (features[name] - mu) / (sd or 1.0)
     return 1.0 / (1.0 + math.exp(-z))
+
+
+# ---------------------------------------------------------------------------
+# v3: reduce errors instead of only flagging them
+#   - translate_n:       several candidate translations (beam search, n best)
+#   - translate_split:   translate sentence by sentence (fights dropped sentences)
+#   - select_best:       pick the candidate that passes the checks and back-translates best
+# ---------------------------------------------------------------------------
+
+def translate_n(texts, src_lang: str, tgt_lang: str, n: int = 4, num_beams: int = 4,
+                model_name: str = MODEL_NAME, batch_size: int = 8, max_new_tokens: int = 256):
+    """Return the n best beam-search translations for every text (list of lists).
+    The first candidate equals translate(...) with the same num_beams."""
+    import torch
+
+    model, tok, device = load_model(model_name)
+    texts = [str(t) for t in texts]
+    order = sorted(range(len(texts)), key=lambda i: len(texts[i]))
+    out = [None] * len(texts)
+    tok.src_lang = src_lang
+    bos = tok.convert_tokens_to_ids(tgt_lang)
+    beams = max(num_beams, n)
+    for start in range(0, len(order), batch_size):
+        idx = order[start:start + batch_size]
+        enc = tok([texts[i] for i in idx], return_tensors="pt", padding=True, truncation=True,
+                  max_length=256).to(device)
+        with torch.no_grad():
+            gen = model.generate(**enc, forced_bos_token_id=bos, num_beams=beams,
+                                 num_return_sequences=n, max_length=max_new_tokens)
+        dec = tok.batch_decode(gen, skip_special_tokens=True)
+        for j, i in enumerate(idx):
+            out[i] = dec[j * n:(j + 1) * n]
+    return out
+
+
+_ABBR = {"mr", "mrs", "ms", "dr", "st", "no", "vs", "etc", "e.g", "i.e", "u.s", "u.k", "jr", "sr",
+         "prof", "inc", "ltd", "co", "mt", "approx", "fig", "a.m", "p.m", "dept", "gen", "gov", "sen"}
+_SENT_END = re.compile(r"[.!?][\"”’)]?\s+(?=[\"“(]?[A-Z0-9])")
+
+
+def split_sentences(text: str):
+    """Split English text into sentences; abbreviations (U.S., Dr.) and initials (George W. Bush) do not split."""
+    parts, start = [], 0
+    for m in _SENT_END.finditer(text):
+        chunk = text[start:m.start() + 1].split()
+        last = chunk[-1].rstrip(".").lower() if chunk else ""
+        if last in _ABBR or (len(last) == 1 and last.isalpha()):
+            continue
+        parts.append(text[start:m.end()].strip())
+        start = m.end()
+    parts.append(text[start:].strip())
+    return [p for p in parts if p]
+
+
+def translate_split(texts, src_lang: str, tgt_lang: str, **kw):
+    """Translate every sentence separately and join them again."""
+    texts = [str(t) for t in texts]
+    pieces = [split_sentences(t) or [t] for t in texts]
+    flat = [p for ps in pieces for p in ps]
+    tr = translate(flat, src_lang, tgt_lang, **kw)
+    out, k = [], 0
+    for ps in pieces:
+        out.append(" ".join(tr[k:k + len(ps)]))
+        k += len(ps)
+    return out
+
+
+def select_best(srcs, candidates, back=None):
+    """For each source pick the candidate that (1) passes the hard checks and the negation check,
+    then (2) has the highest back-translation chrF. Ties keep the earlier candidate (= the default output).
+    candidates: list of lists of Kazakh strings. back: optional dict {kazakh: english back-translation}.
+    Returns (chosen translations, chosen indices, back dict)."""
+    back = dict(back or {})
+    todo = sorted({c for cs in candidates for c in cs if c not in back})
+    if todo:
+        for k, b in zip(todo, translate(todo, "kaz_Cyrl", "eng_Latn")):
+            back[k] = b
+    chosen, idxs = [], []
+    for src, cs in zip(srcs, candidates):
+        def score(i):
+            c = cs[i]
+            penalty = 1000 * bool(hard_checks(src, c)) + 1000 * bool(check_negation(src, c))
+            return (-penalty, sentence_chrf(back[c], src), -i)
+        best = max(range(len(cs)), key=score)
+        chosen.append(cs[best])
+        idxs.append(best)
+    return chosen, idxs, back
+
+
+def improved_translate(texts, src_lang: str = "eng_Latn", tgt_lang: str = "kaz_Cyrl"):
+    """System R (v3): the best of 8 candidates (4 from NLLB 600M + 4 from NLLB 1.3B), picked by select_best.
+    On FLORES+ dev it scored +2.15 chrF over the plain 600M output; see experiments/P3_PLAN.md and REPORT.md."""
+    texts = [str(t) for t in texts]
+    c600 = translate_n(texts, src_lang, tgt_lang, n=4, num_beams=4)
+    c13 = translate_n(texts, src_lang, tgt_lang, n=4, num_beams=4, model_name=BIG_MODEL_NAME)
+    chosen, _, _ = select_best(texts, [a + b for a, b in zip(c600, c13)])
+    return chosen

@@ -46,9 +46,11 @@ def run(text: str):
         label = ("### ⚠️ Бұл аудармаға сенуге болмайды\n"
                  "Do not rely on this translation. Ask a person who reads English.\n\n"
                  f"{kk_lines}\n\n**Why (details):**\n{en_lines}")
-        # Second opinion from the bigger model: more accurate on FLORES+, but not checked by Senim.
+        # Improved translation (v3, system R): the best of 8 candidates from NLLB 600M and 1.3B,
+        # picked to pass the number/date/negation checks and to back-translate best. Not re-checked here,
+        # because the trust threshold was calibrated on the plain 600M output.
         if ENABLE_SECOND:
-            second = senim.translate([text], "eng_Latn", "kaz_Cyrl", model_name=senim.BIG_MODEL_NAME)[0]
+            second = senim.improved_translate([text])[0]
     details = f"Back-translation chrF: {v['bt_chrf']:.1f} (threshold {THRESHOLD:.1f}, {THRESHOLD_NOTE})"
     return kk, label, second, f"{back}\n\n{details}"
 
@@ -72,8 +74,8 @@ with gr.Blocks(title="Senim") as demo:
         with gr.Column():
             out = gr.Textbox(label="Kazakh / Қазақша", lines=6)
             trust = gr.Markdown()
-            second = gr.Textbox(label="Second translation by a bigger model (only with a warning; not checked) / "
-                                      "Екінші нұсқа (үлкен модель, тексерілмеген)", lines=4, visible=ENABLE_SECOND)
+            second = gr.Textbox(label="Improved translation: best of 8 candidates (only with a warning) / "
+                                      "Жақсартылған аударма: 8 нұсқаның ең жақсысы", lines=4, visible=ENABLE_SECOND)
             back = gr.Textbox(label="Back-translation to English (for checking)", lines=4)
     btn.click(run, inputs=src, outputs=[out, trust, second, back])
 

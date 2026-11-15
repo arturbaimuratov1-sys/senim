@@ -499,3 +499,13 @@ def select_best(srcs, candidates, back=None):
         chosen.append(cs[best])
         idxs.append(best)
     return chosen, idxs, back
+
+
+def improved_translate(texts, src_lang: str = "eng_Latn", tgt_lang: str = "kaz_Cyrl"):
+    """System R (v3): the best of 8 candidates (4 from NLLB 600M + 4 from NLLB 1.3B), picked by select_best.
+    On FLORES+ dev it scored +2.15 chrF over the plain 600M output; see experiments/P3_PLAN.md and REPORT.md."""
+    texts = [str(t) for t in texts]
+    c600 = translate_n(texts, src_lang, tgt_lang, n=4, num_beams=4)
+    c13 = translate_n(texts, src_lang, tgt_lang, n=4, num_beams=4, model_name=BIG_MODEL_NAME)
+    chosen, _, _ = select_best(texts, [a + b for a, b in zip(c600, c13)])
+    return chosen

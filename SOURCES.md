@@ -36,6 +36,7 @@ Everything this project uses, with links. Licences are those stated by each sour
 - scikit-learn (logistic regression, cross-validation, AUC, Cohen's kappa) — https://scikit-learn.org
 - pandas, NumPy, SciPy, Matplotlib — https://pandas.pydata.org, https://numpy.org, https://scipy.org, https://matplotlib.org
 - Google Colab (free T4 GPU) — https://colab.research.google.com
+- Kaggle Notebooks (free T4 GPU; used for the v3 experiment) — https://www.kaggle.com/code
 - GitHub and GitHub CLI — https://github.com, https://cli.github.com
 
 ## AI tools
