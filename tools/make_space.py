@@ -13,11 +13,12 @@ out.mkdir(exist_ok=True)
 
 shutil.copyfile(root / "app.py", out / "app.py")
 shutil.copyfile(root / "senim.py", out / "senim.py")
+shutil.copyfile(root / "senim_fast.py", out / "senim_fast.py")  # CTranslate2 int8 backend (fast on CPU)
 shutil.copyfile(root / "results" / "threshold.json", out / "threshold.json")
 
 # gradio itself is provided by the Space SDK; LaBSE / scikit-learn are only needed for the notebook.
 (out / "requirements.txt").write_text(
-    "torch\ntransformers>=4.40\nsentencepiece\nsacrebleu>=2.4\n", encoding="utf-8", newline="\n")
+    "torch\ntransformers>=4.40\nsentencepiece\nsacrebleu>=2.4\nctranslate2>=4.0\n", encoding="utf-8", newline="\n")
 
 readme = """---
 title: Senim

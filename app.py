@@ -26,6 +26,16 @@ import torch  # noqa: E402
 
 ENABLE_SECOND = torch.cuda.is_available() or os.environ.get("SENIM_SECOND") == "1"
 
+# Without a GPU, use the CTranslate2 int8 backend if it is installed: on CPU it was 3.2x faster with the same
+# chrF (results/v4_speed_backend.csv). On a GPU keep the transformers model (int8 there cost 0.6 chrF).
+if not torch.cuda.is_available() and "SENIM_BACKEND" not in os.environ:
+    try:
+        import ctranslate2  # noqa: F401
+        os.environ["SENIM_BACKEND"] = "ct2"
+    except ImportError:
+        pass
+BACKEND = "CTranslate2 int8" if os.environ.get("SENIM_BACKEND", "").lower() == "ct2" else "transformers"
+
 
 def run(text: str):
     text = (text or "").strip()
@@ -60,7 +70,8 @@ def run(text: str):
             if senim.hard_checks(text, second) or senim.check_negation(text, second):
                 second += ("\n\n⚠️ Бұл нұсқа да тексеруден өтпеді / this version also fails the checks "
                            "(numbers, dates or negation). Ask a person who reads English.")
-    details = f"Back-translation chrF: {v['bt_chrf']:.1f} (threshold {THRESHOLD:.1f}, {THRESHOLD_NOTE})"
+    details = (f"Back-translation chrF: {v['bt_chrf']:.1f} (threshold {THRESHOLD:.1f}, {THRESHOLD_NOTE}). "
+               f"Backend: {BACKEND}.")
     return kk, label, second, f"{back}\n\n{details}"
 
 

@@ -1,0 +1,4 @@
+system,split,n,corpus_chrF,seconds_total,seconds_per_sentence,mean_sent_chrF_gain_vs_A,gain_ci95_low,gain_ci95_high,share_best_of_8
+A,dev,997,50.39,153.2,0.154,,,,
+R,dev,997,52.72,764.9,0.767,2.11,1.6,2.58,
+C,dev,997,52.43,535.1,0.537,1.89,1.42,2.31,0.699

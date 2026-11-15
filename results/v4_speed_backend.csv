@@ -1,0 +1,5 @@
+device,n_sentences,backend,seconds_total,seconds_per_sentence,chrF,speedup_vs_hf,identical_outputs_share
+cuda (Kaggle T4),300,HF transformers fp16,30.98,0.1033,50.31,1.00,
+cuda (Kaggle T4),300,CTranslate2 int8_float16,16.72,0.0557,49.70,1.85,0.38
+cpu (Kaggle, 4 cores),50,HF transformers fp32,200.17,4.0033,49.04,1.00,
+cpu (Kaggle, 4 cores),50,CTranslate2 int8,61.77,1.2354,49.06,3.24,0.32
