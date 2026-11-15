@@ -33,6 +33,8 @@ Everything this project uses, with links. Licences are those stated by each sour
 - Hugging Face Datasets — https://github.com/huggingface/datasets
 - Gradio (demo app) — https://www.gradio.app
 - CTranslate2 (optional fast inference backend, v4) — https://github.com/OpenNMT/CTranslate2
+- edge-tts (text-to-speech for the demo video voice-over; Microsoft Edge neural voices) — https://github.com/rany2/edge-tts
+- FFmpeg via imageio-ffmpeg, and Pillow (video assembly and the end card) — https://github.com/imageio/imageio-ffmpeg, https://python-pillow.org
 - sentence-transformers — https://www.sbert.net
 - scikit-learn (logistic regression, cross-validation, AUC, Cohen's kappa) — https://scikit-learn.org
 - pandas, NumPy, SciPy, Matplotlib — https://pandas.pydata.org, https://numpy.org, https://scipy.org, https://matplotlib.org
@@ -48,5 +50,6 @@ Everything this project uses, with links. Licences are those stated by each sour
   run the v3/v4 experiments on Kaggle, and draft README/REPORT/SOURCES.
   Two Claude Code subagents helped in v4: one reviewed the code for bugs, one wrote `senim_fast.py` (CTranslate2 backend) and its tests;
   their work was checked by running it.
+  The demo video is the author's screen recording; its voice-over is AI-generated (edge-tts) from a script written by Claude Code and approved by the author, and Claude Code assembled the video (`tools/build_video.py`).
   All numbers come from the Colab and Kaggle runs, not from the AI. Result tables were copied with MD5 checks,
   except `results/v4_speed_backend.csv`, which was copied by hand from the printed benchmark log.
