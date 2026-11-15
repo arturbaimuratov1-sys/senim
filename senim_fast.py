@@ -72,7 +72,14 @@ def pick_device(cuda_device_count: int, override: str | None = None) -> tuple[st
     device = (override or "").strip().lower() or ("cuda" if cuda_device_count > 0 else "cpu")
     if device not in ("cuda", "cpu"):
         raise ValueError(f"unknown device {device!r}; use 'cuda' or 'cpu'")
-    return device, ("int8_float16" if device == "cuda" else "int8")
+    default = "int8_float16" if device == "cuda" else "int8"
+    # SENIM_CT2_COMPUTE overrides the precision, e.g. "float32" (closest to the transformers model) or "int8".
+    return device, (os.environ.get("SENIM_CT2_COMPUTE", "").strip() or default)
+
+
+def conversion_quantization() -> str | None:
+    """Weights stored on disk: int8 by default; SENIM_CT2_COMPUTE=float32 also keeps float32 weights."""
+    return None if os.environ.get("SENIM_CT2_COMPUTE", "").strip() in ("float32", "float16") else "int8"
 
 
 def length_sorted_order(texts: Sequence[str]) -> list[int]:
@@ -163,7 +170,9 @@ def load_model(model_name: str = MODEL_NAME, device: str | None = None):
             if key not in _models:
                 from transformers import AutoTokenizer
 
-                path = ensure_converted(model_name)
+                quant = conversion_quantization()
+                out_dir = default_cache_root() / (sanitize_name(model_name) + ("" if quant == "int8" else "-float"))
+                path = ensure_converted(model_name, out_dir=out_dir, quantization=quant)
                 translator = ctranslate2.Translator(path, device=dev, compute_type=compute_type)
                 tok = AutoTokenizer.from_pretrained(model_name)
                 _models[key] = (translator, tok, dev)
